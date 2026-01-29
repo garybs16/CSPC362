@@ -17,9 +17,13 @@ int main(){
     } */
    test.updateOccupancy();
    test.printBitBoard(test.occupancy[0]);
-   test.makeMove(0, 9,1);
+   test.makeMove(0, 9, 24, 0);
    test.updateOccupancy();
    test.printBitBoard(test.piece_bitboard[0]);
+   for(int i{0}; i < 64; i++){
+       std::cout << test.toSquare(i) << " ";
+
+   }
     return 0;
 }
 

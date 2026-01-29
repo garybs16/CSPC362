@@ -24,6 +24,9 @@ class Board{
         void defaultBoard();
         void updateOccupancy();
         void makeMove(int piece_, int from, int dest, bool turn);
+        std::string toSquare(int space);
+    private:
+        std::string files[8] = {"a", "b","c","d","e","f", "g", "h"};
 };
 
 #endif

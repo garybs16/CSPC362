@@ -87,15 +87,25 @@ void Board::makeMove(int piece_, int from, int dest, bool turn){
     Move move;
     move.dest = dest;
     move.from = from;
-    bool present = (piece_bitboard[piece_] & 1ULL << from );
-    bool occupied = (occupancy[0] & 1ULL << dest);
+    bool present = (piece_bitboard[piece_] & 1ULL << move.from );
+    bool occupied = (occupancy[0] & 1ULL << move.dest);
     if(occupied){
-        std::cout << "invalid square";
+        std::cout << "invalid square" ;
     }
     else if(present){
-        piece_bitboard[piece_] ^= (1ULL << from);
-        piece_bitboard[piece_] |= (1ULL << dest);
+        piece_bitboard[piece_] ^= (1ULL << move.from);
+        piece_bitboard[piece_] |= (1ULL << move.dest);
     }
     
     
+}
+        
+std::string Board::toSquare(int space){
+    
+    int file = space % 8;
+    int row = (space / 8) + 1;
+    
+    std::string square = Board::files[file];
+    square += std::to_string(row);
+    return square;
 }
