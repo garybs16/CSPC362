@@ -5,11 +5,21 @@
 
 
 int main(){
-    Board myboard;
-    myboard.setEmpty();
-    myboard.piece_bitboard[P] |= (1ULL << 0);
-    myboard.piece_bitboard[P] |= (1ULL << 8);
-    myboard.printBitBoard(myboard.piece_bitboard[P]);
+
     
+    Board test;
+    test.setEmpty();
+    test.defaultBoard();
+    /*for(int i =0 ; i<12; i++){
+        std::cout << i << std::endl;
+        test.printBitBoard(test.piece_bitboard[i]);
+        
+    } */
+   test.updateOccupancy();
+   test.printBitBoard(test.occupancy[0]);
+   test.makeMove(0, 9,1);
+   test.updateOccupancy();
+   test.printBitBoard(test.piece_bitboard[0]);
     return 0;
 }
+
