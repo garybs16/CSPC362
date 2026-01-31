@@ -8,13 +8,6 @@ enum piece{
     bP, bN, bB, bR, bQ, bK
 };
 
-struct Move{
-    int from,
-        dest,
-        type;
-};
-
-
 class Board{
     public:
         uint64_t piece_bitboard[12];

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <iostream>
+#include "move.hpp"
 
 void Board::setEmpty(){
     for(size_t i =0; i< 12; i++){
