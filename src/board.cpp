@@ -66,24 +66,26 @@ void Board::defaultBoard(){
 }
 
 void Board::updateOccupancy(){
-    occupancy[0] = 0ULL;
-    occupancy[1] = 0ULL;
-    occupancy[2] = 0ULL;
+    occupancy[whiteOccupancy] = 0ULL;
+    occupancy[blackOccupancy] = 0ULL;
+    occupancy[dualOccupancy] = 0ULL;
 
     ///white occupancy
     for(int i{0}; i < 6; i++){
-        occupancy[0] |= piece_bitboard[i];
+        occupancy[whiteOccupancy] |= piece_bitboard[i];
     }
     
     ///black occupancy
     for(int i{6}; i < 12; i++){
-        occupancy[1] |= piece_bitboard[i];
+        occupancy[blackOccupancy] |= piece_bitboard[i];
     }
 
     ///dual occupancy
-    occupancy[2] = occupancy[0] ^ occupancy[1];
+    occupancy[dualOccupancy] = occupancy[0] ^ occupancy[1];
 }
 
+
+///not sure if we want makemove inside of board
 void Board::makeMove(int piece_, int from, int dest, bool turn){
     Move move;
     move.dest = dest;
