@@ -2,6 +2,7 @@
 #define MOVEGEN_HPP
 #include <iostream>
 #include <vector>
+#include "board.hpp"
 
 class MoveGen{
     public:
