@@ -16,6 +16,7 @@ class Board{
     public:
         uint64_t piece_bitboard[12];
         uint64_t occupancy[2];
+        short int castling {1111};  
         void setEmpty();
         void printBitBoard(uint64_t bitboard);
         void defaultBoard();

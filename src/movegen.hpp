@@ -6,7 +6,7 @@
 
 class MoveGen{
     public:
-        std::vector<int> genPawn(int location, bool isBlack);
+        std::vector<int> genPawn(Board& board, int location, bool isBlack);
 };
 
 
