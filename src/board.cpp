@@ -102,26 +102,27 @@ void Board::updateOccupancy(){
     ///dual occupancy
     occupancy[2] = occupancy[0] ^ occupancy[1];
 }
-
-int Board::getPieceAt(int square){
+int Board::getPieceAt(int square) {
     uint64_t bit = (1ULL << square);
+    
     if (!(occupancy[dualOccupancy] & bit)) return -1;
+    
     int side = (occupancy[0] & bit) ? 0 : 1;
-    int start = (side == 0) ? P : bP;
-    int end = (side == 0) ? K : bK;
+    int start = side ? bP : P;
+    int end = side ? bK : K;
 
     for (int i = start; i <= end; i++) {
         if (piece_bitboard[i] & bit) return i;
     }
-    return -1;
+    
+    return -1; 
 }
-///not sure if we want makemove inside of board
 void Board::makeMove(Move m){
     
     int dest = m.getTo();
     int from = m.getFrom();
+    
     int piece = getPieceAt(from);
-    std::cout << piece;
     int flags = m.getFlags();
     bool present = (piece_bitboard[piece] & 1ULL << from );
     bool occupied = (occupancy[2] & 1ULL << dest);

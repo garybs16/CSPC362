@@ -14,14 +14,18 @@ int main(){
     test.defaultBoard();
     test.updateOccupancy();
     test.printBitBoard(test.occupancy[2]);
-    
-    MoveList ml;
+
+    Move m(9, 17, 0);
+    test.makeMove(m);
+    test.printBitBoard(test.piece_bitboard[P]);
+    /*MoveList ml;
     MoveGen mg;
     mg.genPawn(test,ml);
     ml.printList();
-    test.makeMove(ml.moves[1]);
+
+    
     test.updateOccupancy();
-    test.printBitBoard(test.occupancy[2]);
+    test.printBitBoard(test.occupancy[2]);*/
     return 0;
 }
 
