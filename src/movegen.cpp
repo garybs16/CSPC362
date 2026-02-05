@@ -1,80 +1,33 @@
 #include "movegen.hpp"
-
+#include "move.hpp"
+#include "movelist.hpp"
+#include <bit>
+#include "def.hpp"
+using namespace Masks;
 // Pawn
-std::vector<int> MoveGen::genPawn(Board & board, int location, bool isBlack)
+inline int popLSB(uint64_t& bitboard){
+  int index = std::__countr_zero(bitboard);
+  bitboard &= ~(1ULL << index);
+  return index;
+}
+void MoveGen::toMove(uint64_t target, int shift_, int flags_ , MoveList& movelist){
+  
+  while(target){
+    int to_ = popLSB(target);
+    int from_ = to_ - shift_;
+    movelist.push(Move(from_, to_, flags_));
+  };
+}
+MoveList MoveGen::genPawn(Board& board, MoveList& movelist)
 {
-    std::vector<int> generated; 
-	
-    uint64_t allOccupied = board.occupancy[dualOccupancy];
-    int rankFrom = location / 8;
-    int fileFrom = location % 8;
+    uint64_t empty = ~board.occupancy[dualOccupancy];
     
-    if(!isBlack)
-    {
+    bool sideToMove = board.sideToMove;
 
-        bool isFirst = (location > 7 && location < 16); 
-
-		int oneStep = location + 8;
-
-        if (oneStep >= 0 && oneStep <= 63 && !(allOccupied & (1ull << oneStep)))
-        {
-			generated.push_back(oneStep);
-
-            if (isFirst)
-            {
-                int twoStep = location + 16;
-                if (twoStep >= 0 && twoStep <= 63 && !(allOccupied & (1ull << twoStep)))
-                {
-                    generated.push_back(twoStep);
-                }
-            }
-        }
-
-		// Capture in white turn
-        static const int pawnCapture[2] = { -1,1 };
-        for (int i = 0; i < 2; i++)
-        {
-            int rankDest = rankFrom + 1;
-            int fileDest = fileFrom + pawnCapture[i];
-            int dest = rankDest * 8 + fileDest;
-
-            if (board.occupancy[blackOccupancy] & (1ull << dest))
-            {
-				generated.push_back(dest);
-            }
-        }
-		return generated;
-    }
-    else
-    {
-        bool isFirst = (location > 47 && location < 56);
-		int oneStep = location - 8;
-        if (oneStep >= 0 && oneStep <= 63 && !(allOccupied & (1ull << oneStep)))
-        {
-            generated.push_back(oneStep);
-
-            if (isFirst)
-            {
-                int twoStep = location - 16;
-                if (twoStep >= 0 && twoStep <= 63 && !(allOccupied & (1ull << twoStep)))
-                {
-                    generated.push_back(twoStep);
-                }
-            }
-        }
-        // Capture in black turn
-        static const int pawnCapture[2] = { -1,1 };
-        for (int i = 0; i < 2; i++)
-        {
-            int rankDest = rankFrom - 1;
-            int fileDest = fileFrom + pawnCapture[i];
-            int dest = rankDest * 8 + fileDest;
-
-            if (board.occupancy[whiteOccupancy] & (1ull << dest))
-            {
-                generated.push_back(dest);
-            }
-        }
-		return generated;
-    }
+   
+    uint64_t pushOne = (board.piece_bitboard[P] << 8) & empty;
+    uint64_t pushTwo = (((board.piece_bitboard[P] << 16) & RANK_3) << 8) & empty;
+    
+    toMove(pushTwo, 8, 0, movelist);
+    return movelist;
   }

@@ -4,6 +4,25 @@
 #include <iostream>
 #include "move.hpp"
 
+Board::Board(){
+    Board::sideToMove = 0;
+    setEmpty();
+}; 
+Board::Board(bool isBlack_){
+    Board::sideToMove = isBlack_;
+}
+//copy con
+Board::Board(const Board& other){
+    for(size_t i{0}; i < 12; i++ ){
+        this->piece_bitboard[i] = other.piece_bitboard[i];
+    }
+    for(size_t i{0}; i < 3; i++){
+        this->occupancy[i] = other.occupancy[i];
+    }
+    this->castling = other.castling;
+    this->sideToMove = other.sideToMove;
+    
+}
 void Board::setEmpty(){
     for(size_t i =0; i< 12; i++){
         piece_bitboard[i] = 0ULL;
@@ -72,32 +91,46 @@ void Board::updateOccupancy(){
 
     ///white occupancy
     for(int i{0}; i < 6; i++){
-        occupancy[whiteOccupancy] |= piece_bitboard[i];
+        occupancy[0] |= piece_bitboard[i];
     }
     
     ///black occupancy
     for(int i{6}; i < 12; i++){
-        occupancy[blackOccupancy] |= piece_bitboard[i];
+        occupancy[1] |= piece_bitboard[i];
     }
 
     ///dual occupancy
-    occupancy[dualOccupancy] = occupancy[0] ^ occupancy[1];
+    occupancy[2] = occupancy[0] ^ occupancy[1];
 }
 
+int Board::getPieceAt(int square){
+    uint64_t bit = (1ULL << square);
+    if (!(occupancy[dualOccupancy] & bit)) return -1;
+    int side = (occupancy[0] & bit) ? 0 : 1;
+    int start = (side == 0) ? P : bP;
+    int end = (side == 0) ? K : bK;
 
+    for (int i = start; i <= end; i++) {
+        if (piece_bitboard[i] & bit) return i;
+    }
+    return -1;
+}
 ///not sure if we want makemove inside of board
-void Board::makeMove(int piece_, int from, int dest, bool turn){
-    Move move;
-    move.dest = dest;
-    move.from = from;
-    bool present = (piece_bitboard[piece_] & 1ULL << move.from );
-    bool occupied = (occupancy[0] & 1ULL << move.dest);
+void Board::makeMove(Move m){
+    
+    int dest = m.getTo();
+    int from = m.getFrom();
+    int piece = getPieceAt(from);
+    std::cout << piece;
+    int flags = m.getFlags();
+    bool present = (piece_bitboard[piece] & 1ULL << from );
+    bool occupied = (occupancy[2] & 1ULL << dest);
     if(occupied){
         std::cout << "invalid square" ;
     }
     else if(present){
-        piece_bitboard[piece_] ^= (1ULL << move.from);
-        piece_bitboard[piece_] |= (1ULL << move.dest);
+        piece_bitboard[piece] ^= (1ULL << from);
+        piece_bitboard[piece] |= (1ULL << dest);
     }
     
     
