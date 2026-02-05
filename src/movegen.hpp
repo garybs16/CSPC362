@@ -7,8 +7,11 @@
 
 class MoveGen{
     public:
-        void toMove(uint64_t target, int shift_, int flags_, MoveList& movelist);
-        MoveList genPawn(Board& board, MoveList& movelist);
+        void generateAll();
+    private:
+        void addMoves(uint64_t targets, int from, int flags, MoveList& ml);
+        void addPawnMoves(uint64_t target, int shift_, int flags_, MoveList& movelist);
+        void genPawn(Board& board, MoveList& movelist);
         
 };
 

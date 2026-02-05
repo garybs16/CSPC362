@@ -10,7 +10,13 @@ inline int popLSB(uint64_t& bitboard){
   bitboard &= ~(1ULL << index);
   return index;
 }
-void MoveGen::toMove(uint64_t target, int shift_, int flags_ , MoveList& movelist){
+void MoveGen::addMoves(uint64_t targets, int from, int flags, MoveList& ml) {
+    while (targets) {
+        int to = popLSB(targets);
+        ml.push(Move(from, to, flags));
+    }
+}
+void MoveGen::addPawnMoves(uint64_t target, int shift_, int flags_ , MoveList& movelist){
   
   while(target){
     int to_ = popLSB(target);
@@ -18,7 +24,7 @@ void MoveGen::toMove(uint64_t target, int shift_, int flags_ , MoveList& movelis
     movelist.push(Move(from_, to_, flags_));
   };
 }
-MoveList MoveGen::genPawn(Board& board, MoveList& movelist)
+void MoveGen::genPawn(Board& board, MoveList& movelist)
 {
     uint64_t empty = ~board.occupancy[dualOccupancy];
     
@@ -27,7 +33,8 @@ MoveList MoveGen::genPawn(Board& board, MoveList& movelist)
    
     uint64_t pushOne = (board.piece_bitboard[P] << 8) & empty;
     uint64_t pushTwo = (((board.piece_bitboard[P] << 16) & RANK_3) << 8) & empty;
-    
-    toMove(pushTwo, 8, 0, movelist);
-    return movelist;
+    addPawnMoves(pushOne, 8, 0, movelist);
+    addPawnMoves(pushTwo, 16, 0, movelist);
   }
+
+
