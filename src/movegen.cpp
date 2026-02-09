@@ -1,12 +1,13 @@
 #include "movegen.hpp"
 #include "move.hpp"
 #include "movelist.hpp"
+#include "magic.hpp"
 #include <bit>
 #include "def.hpp"
 using namespace Masks;
 // Pawn
 inline int popLSB(uint64_t& bitboard){
-  int index = std::__countr_zero(bitboard);
+  int index = std::countr_zero(bitboard);
   bitboard &= ~(1ULL << index);
   return index;
 }
@@ -56,36 +57,38 @@ void MoveGen::genPawn(Board& board, MoveList& movelist)
   }
 
 // Knight
-void MoveGen::genKnight(Board& board, MoveList& movelist);
+void MoveGen::genKnight(Board& board, MoveList& movelist)
 {
-  uint64_t empty = ~board.occupancy[dualOccupancy];
-  uint64_t knights = board.piece_bitboard[N];
-  uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy]
-  uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccuoancy : blackOccupancy];
+    uint64_t empty = ~board.occupancy[dualOccupancy];
+    int knightsColor = board.sideToMove ? bN : N;
+    uint64_t knights = board.piece_bitboard[knightsColor];
+    uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy];
+    uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
+    bool sideToMove = board.sideToMove;
 
-  if (!board.sideToMove){
-    int from = popLSB(knights);
-    uint64_t position = 1ULL << from;
-    uint64_t attacks = 0ULL;
+    while (knights) {
+        int from = popLSB(knights);
+        uint64_t position = 1ULL << from;
+        uint64_t attacks = 0ULL;
 
-    attacks |= (pos << 17) & ~File_A & ~ allies;
-    attacks |= (pos << 10) & ~(File_A | File_B) & ~allies;
-    attacks |= (pos >> 15) & ~File_A & ~allies;
-    attacks |= (pos >> 6) & ~(File_A | File_B) & ~allies;
-    attacks |= (pos << 15) & ~File_H & allies;
-    attacks |= (pos << 6) & (File_H | File_G) & ~allies;
-    attacks |= (pos >> 17) & ~File_H & ~allies;
-    attacks |= (pos >> 10) & ~(File_H | File_G) & ~allies;
+        attacks |= (position << 17) & ~File_H & ~allies;
+        attacks |= (position << 10) & ~(File_G | File_H) & ~allies;
+        attacks |= (position >> 15) & ~File_A & ~allies;
+        attacks |= (position >> 6) & ~(File_G | File_H) & ~allies;
+        attacks |= (position << 15) & ~File_A & allies;
+        attacks |= (position << 6) & (File_A | File_B) & ~allies;
+        attacks |= (position >> 17) & ~File_H & ~allies;
+        attacks |= (position >> 10) & ~(File_A | File_B) & ~allies;
 
-    uint64_t capture = attacks & enemy;
-    uint64_t notCapture = attacks & ~enemy;
-    if (capture) {
-      addMoves(capture, form, 4, movelist);
-    if (notCapture){
-      addMoves(notCapture, from, 0, movelist);
+        uint64_t capture = attacks & enemy;
+        uint64_t notCapture = attacks & ~enemy;
+        if (capture) {
+            addMoves(capture, from, 4, movelist);
+        }
+        if (notCapture) {
+            addMoves(notCapture, from, 0, movelist);
+        }
     }
-    }
-  }
 }
 
 
