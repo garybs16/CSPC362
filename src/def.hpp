@@ -14,7 +14,7 @@ namespace Masks {
     constexpr uint64_t RANK_8 = RANK_1 << 56;
 
     // File Mask
-    constexpr uint64_t File_A = 0x010101010101010101ULL;
+    constexpr uint64_t File_A = 0x0101010101010101ULL;;
     constexpr uint64_t File_B = File_A << 1;
     constexpr uint64_t File_C = File_A << 2;
     constexpr uint64_t File_D = File_A << 3;
