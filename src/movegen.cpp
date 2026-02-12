@@ -279,3 +279,52 @@ void MoveGen::genSlide(Board& board, MoveList& movelist)
     
 }
 
+
+//
+// =========================
+// KING MOVE GENERATION ADDED
+// =========================
+//
+void MoveGen::genKing(Board& board, MoveList& movelist)
+{
+    int kingPiece = board.sideToMove ? bK : K;
+    uint64_t king = board.piece_bitboard[kingPiece];
+
+    if (!king) return;
+
+    int from = popLSB(king);
+    uint64_t position = 1ULL << from;
+
+    uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy];
+    uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
+
+    uint64_t attacks = 0ULL;
+
+    // Vertical
+    attacks |= (position << 8);
+    attacks |= (position >> 8);
+
+    // Horizontal
+    attacks |= (position << 1) & ~File_A;
+    attacks |= (position >> 1) & ~File_H;
+
+    // Diagonals
+    attacks |= (position << 9) & ~File_A;
+    attacks |= (position << 7) & ~File_H;
+    attacks |= (position >> 7) & ~File_A;
+    attacks |= (position >> 9) & ~File_H;
+
+    // Remove friendly squares
+    attacks &= ~allies;
+
+    uint64_t capture = attacks & enemy;
+    uint64_t notCapture = attacks & ~enemy;
+
+    if (capture) {
+        addMoves(capture, from, 4, movelist);
+    }
+    if (notCapture) {
+        addMoves(notCapture, from, 0, movelist);
+    }
+}
+
