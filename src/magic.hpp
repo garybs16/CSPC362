@@ -3,6 +3,11 @@
 #include <cstdint>
 
 // Rook Magic Numbers
+// Magic number is a hash constant that mixes of occupancy & mask[sq] based on multiplication and selects a few high-order bits to create an attackTable index.
+// The magic numbers are chosen to ensure that there are no collisions for all possible occupancy patterns of the square, so it acts like perfect hashing.
+// Basically, I need to fine those numbers uing a brute-force search which generates random 64-bit numbers 
+// and tests them against all possible occupancy variations of the square to ensure that they produce unique indices for the attack table.
+// But I have added pre-computed magic numbers for each square, which are commonly used in chess programming and can be found in online.
 const uint64_t RookMagics[64] = {
     0x8a80104000800020ULL, 0x140002000100040ULL, 0x2801880a0017001ULL, 0x100081001000420ULL,
     0x200020010080420ULL, 0x3001c0002010008ULL, 0x8480008002000100ULL, 0x2080088004402900ULL,
@@ -22,6 +27,10 @@ const uint64_t RookMagics[64] = {
     0x40040008002000ULL, 0x80020004000800ULL, 0x20020004000800ULL, 0x40020004000800ULL
 };
 // Rook Shift Bits
+// Shift bits (array of bits) means the number of index bits (= relevantBits) required in that square, and as a result, 
+// it determines the table size 2^Bits[sq], and the index calculation is performed in the form of ((occupancy & mask[sq]) * magic) >> (64 - Bits).
+// The number of relevant occupancy bits for a rook on a given square is determined by the number of squares it can attack in each direction (rank and file) minus the edges of the board.
+// At this time, the magic is chosen so that there are no collisions for all possible occupancy patterns of the square, so it acts like perfect hashing.
 const int RookBits[64] = {
     12, 11, 11, 11, 11, 11, 11, 12,
     11, 10, 10, 10, 10, 10, 10, 11,
