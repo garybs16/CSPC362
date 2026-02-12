@@ -91,4 +91,191 @@ void MoveGen::genKnight(Board& board, MoveList& movelist)
     }
 }
 
+uint64_t MoveGen::maskRookAttacks(int square) {
+    uint64_t attacks = 0ULL;
+    int r = square / 8;
+    int f = square % 8;
+
+    for (int r2 = r + 1; r2 < 7; r2++) attacks |= (1ULL << (r2 * 8 + f));
+    for (int r2 = r - 1; r2 > 0; r2--) attacks |= (1ULL << (r2 * 8 + f));
+    for (int f2 = f + 1; f2 < 7; f2++) attacks |= (1ULL << (r * 8 + f2));
+    for (int f2 = f - 1; f2 > 0; f2--) attacks |= (1ULL << (r * 8 + f2));
+    return attacks;
+}
+// Generating sliding pieces attacks map
+// Runs only onece when starts up to fill the attack tables for magic bitboards
+uint64_t MoveGen::generateRookAttacks(int square, uint64_t occupancy) {
+    uint64_t attacks = 0ULL;
+	int r = square / 8;
+	int f = square % 8;
+
+    for (int r2 = r + 1; r2 <= 7; r2++)
+    {
+        attacks |= (1ULL << (r2 * 8 + f));
+		if (occupancy & (1ULL << (r2 * 8 + f))) break;
+    }
+    for (int r2 = r - 1; r2 >= 0; r2--)
+    {
+		attacks |= (1ULL << (r2 * 8 + f));
+        if (occupancy & (1ULL << (r2 * 8 + f))) break;
+    }
+    for (int f2 = f + 1; f2 <= 7; f2++)
+	{
+        attacks |= (1ULL << (r * 8 + f2));
+        if (occupancy & (1ULL << (r * 8 + f2))) break;
+    }
+    for (int f2 = f - 1; f2 >= 0; f2--)
+    {
+        attacks |= (1ULL << (r * 8 + f2));
+        if (occupancy & (1ULL << (r * 8 + f2))) break;
+    }
+	return attacks;
+}
+uint64_t MoveGen::generateBishopAttacks(int square, uint64_t occupancy) {
+    uint64_t attacks = 0ULL;
+    int r = square / 8;
+    int f = square % 8;
+    for (int r2 = r + 1, f2 = f + 1; r2 <= 7 && f2 <= 7; r2++, f2++)
+    {
+        attacks |= (1ULL << (r2 * 8 + f2));
+        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
+    }
+    for (int r2 = r + 1, f2 = f - 1; r2 <= 7 && f2 >= 0; r2++, f2--)
+    {
+        attacks |= (1ULL << (r2 * 8 + f2));
+        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
+    }
+    for (int r2 = r - 1, f2 = f + 1; r2 >= 0 && f2 <= 7; r2--, f2++)
+    {
+        attacks |= (1ULL << (r2 * 8 + f2));
+        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
+    }
+    for (int r2 = r - 1, f2 = f - 1; r2 >= 0 && f2 >= 0; r2--, f2--)
+    {
+        attacks |= (1ULL << (r2 * 8 + f2));
+        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
+    }
+    return attacks;
+}
+
+// Attacks
+uint64_t MoveGen::getRookAttacks(int square, uint64_t occupancy) {
+    uint64_t mask = rookMasks[square];
+    uint64_t occupancyBits = occupancy & mask;
+    int magicIndex = (occupancyBits * RookMagics[square]) >> (64 - RookBits[square]);
+    return rookAttackTable[square][magicIndex];
+}
+uint64_t MoveGen::getBishopAttacks(int square, uint64_t occupancy) {
+    uint64_t mask = bishopMasks[square];
+    uint64_t occupancyBits = occupancy & mask;
+    int magicIndex = (occupancyBits * BishopMagics[square]) >> (64 - BishopBits[square]);
+    return bishopAttackTable[square][magicIndex];
+uint64_t MoveGen::getQueenAttacks(int square, uint64_t occupancy) {
+    return getRookAttacks(square, occupancy) | getBishopAttacks(square, occupancy);
+}
+}
+
+void MoveGen::includeMagic()
+{
+    for (int bd = 0; bd < 64; bd++)
+    {
+        rookMasks[bd] = maskRookAttacks(bd);
+		bishopMasks[bd] = maskBishopAttacks(bd);
+		int rookBits = RookBits[bd];
+		int bishopBits = BishopBits[bd];
+		int rookOccupancyVariations = 1 << rookBits;
+		int bishopOccupancyVariations = 1 << bishopBits;
+
+        for (int i = 0; i < bishopOccupancyVariations; i++)
+        {
+            uint64_t occupancy = 0ULL;
+            uint64_t mask = bishopMasks[bd];
+            int boardIndex = i;
+            while (mask) {
+                int bitIndex = popLSB(mask);
+                mask &= ~(1ULL << bitIndex);
+                if (boardIndex & 1) {
+                    occupancy |= (1ULL << bitIndex);
+                }
+				boardIndex >>= 1;
+            }
+			uint64_t magicIndex = (occupancy * BishopMagics[bd]) >> (64 - bishopBits);
+			uint64_t attacks = generateBishopAttacks(bd, occupancy);
+			bishopAttackTable[bd][magicIndex] = attacks;
+        }
+        for (int i = 0; i < rookOccupancyVariations; i++) {
+            uint64_t occupancy = 0ULL;
+            uint64_t mask = rookMasks[bd];
+            int boardIndex = i;
+
+            while (mask) {
+				int bitIndex = popLSB(mask);
+				mask &= ~(1ULL << bitIndex);
+                if (boardIndex & 1) {
+                    occupancy |= (1ULL << bitIndex);
+                }
+				boardIndex >>= 1;
+            }
+			uint64_t magicIndex = (occupancy * RookMagics[bd]) >> (64 - rookBits);
+			uint64_t attacks = generateRookAttacks(bd, occupancy);
+			rookAttackTable[bd][magicIndex] = attacks;
+        }
+    }
+}
+// Sliding Pieces
+void MoveGen::genSlide(Board& board, MoveList& movelist)
+{
+	uint64_t empty = ~board.occupancy[dualOccupancy];
+	int bishopsColor = board.sideToMove ? bB : B;
+	int rooksColor = board.sideToMove ? bR : R;
+	int queensColor = board.sideToMove ? bQ : Q;
+    uint64_t bishops = board.piece_bitboard[bishopsColor];
+    uint64_t rooks = board.piece_bitboard[rooksColor];
+	uint64_t queens = board.piece_bitboard[queensColor];
+    
+	uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy];
+	uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
+	uint64_t occupancy = board.occupancy[dualOccupancy];
+
+    while (bishops)
+    {
+        int from = popLSB(bishops);
+        uint64_t attacks = getBishopAttacks(from, occupancy) & ~allies;
+        uint64_t capture = attacks & enemy;
+        uint64_t notCapture = attacks & ~enemy;
+        if (capture) {
+            addMoves(capture, from, 4, movelist);
+        }
+        if (notCapture) {
+            addMoves(notCapture, from, 0, movelist);
+		}
+    }
+    while (rooks)
+    {
+        int from = popLSB(rooks);
+        uint64_t attacks = getRookAttacks(from, occupancy) & ~allies;
+        uint64_t capture = attacks & enemy;
+        uint64_t notCapture = attacks & ~enemy;
+        if (capture) {
+            addMoves(capture, from, 4, movelist);
+        }
+        if (notCapture) {
+            addMoves(notCapture, from, 0, movelist);
+        }
+    }
+    while (queens)
+    {
+        int from = popLSB(queens);
+        uint64_t attacks = (getBishopAttacks(from, occupancy) | getRookAttacks(from, occupancy)) & ~allies;
+        uint64_t capture = attacks & enemy;
+        uint64_t notCapture = attacks & ~enemy;
+        if (capture) {
+            addMoves(capture, from, 4, movelist);
+        }
+        if (notCapture) {
+            addMoves(notCapture, from, 0, movelist);
+        }
+    }
+    
+}
 
