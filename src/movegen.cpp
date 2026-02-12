@@ -328,3 +328,11 @@ void MoveGen::genKing(Board& board, MoveList& movelist)
     }
 }
 
+
+
+
+// gen all
+
+void MoveGen::generateAll(Board& board, MoveList& ml){
+  nullptr;
+}

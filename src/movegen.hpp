@@ -8,7 +8,7 @@
 class MoveGen{
     public:
         void includeMagic();
-        void generateAll();
+        void generateAll(Board& board, MoveList& ml);
 		uint64_t rookAttackMap(int square, uint64_t occupancy);
 		uint64_t bishopAttackMap(int square, uint64_t occupancy);
         uint64_t getRookAttacks(int square, uint64_t occupancy);
