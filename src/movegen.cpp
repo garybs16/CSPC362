@@ -328,7 +328,88 @@ void MoveGen::genKing(Board& board, MoveList& movelist)
     }
 }
 
+// Attack check
+bool MoveGen::isSquareAttacked(Board& board, int square) 
+{
+    uint64_t occupancy = board.occupancy[dualOccupancy];
+    uint64_t enemyPawns = board.piece_bitboard[byWhite ? P : bP];
+    uint64_t enemyKnights = board.piece_bitboard[byWhite ? N : bN];
+    uint64_t enemyBishops = board.piece_bitboard[byWhite ? B : bB];
+    uint64_t enemyRooks = board.piece_bitboard[byWhite ? R : bR];
+    uint64_t enemyQueens = board.piece_bitboard[byWhite ? Q : bQ];
+    uint64_t enemyKing = board.piece_bitboard[byWhite ? K : bK];
 
+    // Pawn attacks
+    if (byWhite) {
+        if ((enemyPawns << 7) & ~File_H & (1ULL << square)) return true;
+        if ((enemyPawns << 9) & ~File_A & (1ULL << square)) return true;
+    } else {
+        if ((enemyPawns >> 7) & ~File_A & (1ULL << square)) return true;
+        if ((enemyPawns >> 9) & ~File_H & (1ULL << square)) return true;
+    }
+    // Knight attacks
+    uint64_t position = 1ULL << squre;
+	uint64_t knightAttacks = 0ULL;
+	knightAttacks |= (position << 17) & ~File_H & enemyKnights;
+	knightAttacks |= (position << 10) & ~(File_G | File_H) & enemyKnights;
+	knightAttacks |= (position >> 15) & ~File_A & enemyKnights;
+	knightAttacks |= (position >> 6) & ~(File_G | File_H) & enemyKnights;
+	knightAttacks |= (position << 15) & ~File_A & enemyKnights;
+	knightAttacks |= (position << 6) & ~(File_A | File_B) & enemyKnights;
+	knightAttacks |= (position >> 17) & ~File_H & enemyKnights;
+	knightAttacks |= (position >> 10) & ~(File_A | File_B) & enemyKnights;
+	if (knightAttacks) return true;
+
+    // Bishop attacks
+    if ((getBishopAttacks(square, occupancy) & (enemyBishops | enemyQueens)) != 0) return true;
+
+    // Rook attacks
+    if ((getRookAttacks(square, occupancy) & (enemyRooks | enemyQueens)) != 0) return true;
+
+	// Queen attacks
+	if ((getQueenAttacks(square, occupancy) & enemyQueens) != 0) return true;
+
+    // King attacks
+	uint64_t kingAttacks = 0ULL;
+	kingAttacks |= (position << 8) & enemyKing;
+	kingAttacks |= (position << 8) & enemyKing;
+	kingAttacks |= (position >> 1) & ~File_A & enemyKing;
+	kingAttacks |= (position >> 1) & ~File_H & enemyKing;
+	kingAttacks |= (position << 9) & ~File_A & enemyKing;
+	kingAttacks |= (position << 7) & ~File_A & enemyKing;
+	kingAttacks |= (position >> 9) & ~File_H & enemyKing;
+	kingAttacks |= (position >> 7) & ~File_H & enemyKing;
+	if (kingAttacks) return true;
+
+    return false;
+}
+
+// Castling
+void MoveGen::genCastling(Board& board, MoveList& movelist) 
+{
+    if (board.sideToMove == white) 
+    {
+        // White kingside
+        if ((board.castlingRights & 1) && !(board.occupancy[dualOccupancy] & (1ULL << 5 | 1ULL << 6)) && !isSquareAttacked(board, 4) && !isSquareAttacked(board, 5) && !isSquareAttacked(board, 6)) {
+            movelist.push(Move(4, 6, 2)); 
+        }
+        // White queenside
+        if ((board.castlingRights & 2) && !(board.occupancy[dualOccupancy] & (1ULL << 1 | 1ULL << 2 | 1ULL << 3)) && !isSquareAttacked(board, 4) && !isSquareAttacked(board, 3) && !isSquareAttacked(board, 2)) {
+            movelist.push(Move(4, 2, 2)); 
+        }
+    } 
+    else 
+    {
+        // Black kingside
+        if ((board.castlingRights & 4) && !(board.occupancy[dualOccupancy] & (1ULL << 61 | 1ULL << 62)) && !isSquareAttacked(board, 60) && !isSquareAttacked(board, 61) && !isSquareAttacked(board, 62)) {
+            movelist.push(Move(60, 62, 2)); 
+        }
+        // Black queenside
+        if ((board.castlingRights & 8) && !(board.occupancy[dualOccupancy] & (1ULL << 57 | 1ULL << 58 | 1ULL << 59)) && !isSquareAttacked(board, 60) && !isSquareAttacked(board, 59) && !isSquareAttacked(board, 58)) {
+            movelist.push(Move(60, 58, 2)); 
+        }
+    }
+}
 
 
 // gen all
