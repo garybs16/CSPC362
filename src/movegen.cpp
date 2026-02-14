@@ -102,6 +102,31 @@ uint64_t MoveGen::maskRookAttacks(int square) {
     for (int f2 = f - 1; f2 > 0; f2--) attacks |= (1ULL << (r * 8 + f2));
     return attacks;
 }
+
+uint64_t MoveGen::maskBishopAttacks(int square) {
+    uint64_t attacks = 0ULL;
+
+    int r = square / 8;
+    int f = square % 8;
+
+
+    for (int r2 = r + 1, f2 = f + 1; r2 < 7 && f2 < 7; ++r2, ++f2)
+        attacks |= (1ULL << (r2 * 8 + f2));
+
+
+    for (int r2 = r + 1, f2 = f - 1; r2 < 7 && f2 > 0; ++r2, --f2)
+        attacks |= (1ULL << (r2 * 8 + f2));
+
+    
+    for (int r2 = r - 1, f2 = f + 1; r2 > 0 && f2 < 7; --r2, ++f2)
+        attacks |= (1ULL << (r2 * 8 + f2));
+
+    for (int r2 = r - 1, f2 = f - 1; r2 > 0 && f2 > 0; --r2, --f2)
+        attacks |= (1ULL << (r2 * 8 + f2));
+
+    return attacks;
+}
+
 // Generating sliding pieces attacks map
 // Runs only onece when starts up to fill the attack tables for magic bitboards
 uint64_t MoveGen::generateRookAttacks(int square, uint64_t occupancy) {
@@ -170,9 +195,10 @@ uint64_t MoveGen::getBishopAttacks(int square, uint64_t occupancy) {
     uint64_t occupancyBits = occupancy & mask;
     int magicIndex = (occupancyBits * BishopMagics[square]) >> (64 - BishopBits[square]);
     return bishopAttackTable[square][magicIndex];
+}
 uint64_t MoveGen::getQueenAttacks(int square, uint64_t occupancy) {
     return getRookAttacks(square, occupancy) | getBishopAttacks(square, occupancy);
-}
+
 }
 
 void MoveGen::includeMagic()
