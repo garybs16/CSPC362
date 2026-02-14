@@ -1,5 +1,4 @@
-// ui.cpp  (SFML 2.6.1)
-// Connects SFML UI to your engine Board + MoveGen bitboards.
+
 
 #include <SFML/Graphics.hpp>
 #include <iostream>
@@ -27,10 +26,8 @@ int main() {
     const int boardSize = 8;
     const float squareSize = 100.0f;
 
-    // --- Engine objects ---
     Board board;
 
-    // IMPORTANT: MoveGen is huge; allocate it on the heap to avoid stack overflow.
     auto movegen = std::make_unique<MoveGen>();
 
     MoveList movelist;
@@ -39,14 +36,12 @@ int main() {
     board.defaultBoard();
     board.updateOccupancy();
 
-    // Only needed if you rely on rook/bishop/queen magic attack lookups
     movegen->includeMagic();
 
-    // Convert UI (row,col) to engine square (0..63 where 0=a1)
     auto rcToSquare = [](int row, int col) {
-        int rank = 7 - row;        // UI row 0 (top) -> rank 7
-        int file = col;            // col 0 -> file a
-        return rank * 8 + file;    // a1 = 0
+        int rank = 7 - row;        
+        int file = col;           
+        return rank * 8 + file;    
     };
 
     int selectedSquare = -1;
@@ -78,7 +73,6 @@ int main() {
                               << " sideToMove=" << (board.sideToMove ? "black" : "white")
                               << "\n";
 
-                    // Simple two-click move test (no legality checking here yet)
                     if (selectedSquare == -1) {
                         if (p != -1) {
                             selectedSquare = sq;
@@ -96,7 +90,6 @@ int main() {
             }
         }
 
-        // --- Draw ---
         window.clear();
 
         for (int row = 0; row < boardSize; ++row) {
@@ -110,12 +103,11 @@ int main() {
 
                 int sq = rcToSquare(row, col);
                 if (sq == selectedSquare) {
-                    square.setFillColor(sf::Color(240, 200, 60)); // highlight selected
+                    square.setFillColor(sf::Color(240, 200, 60)); 
                 }
 
                 window.draw(square);
 
-                // Draw piece from engine board
                 int p = board.getPieceAt(sq);
                 if (p != -1) {
                     bool isWhite = (p >= P && p <= K);
