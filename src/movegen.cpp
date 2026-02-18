@@ -14,7 +14,17 @@ inline int popLSB(uint64_t& bitboard){
 void MoveGen::addMoves(uint64_t targets, int from, int flags, MoveList& ml) {
     while (targets) {
         int to = popLSB(targets);
-        ml.push(Move(from, to, flags));
+
+      // Promotion
+      if ((to_ >= 0 && to_ <= 7) || (to_ >= 56 && to_ <= 63)
+      {
+        
+	      movelist.push(Move(from_, to_, 8)) // Queen promotion
+	      movelist.push(Move(from_, to_, 9)) // Rook promotion
+	      movelist.push(Move(from_, to_, 10)) // Bishop promotion
+	      movelist.push(Move(from_, to_, 11)); // Knight promotion
+      }
+      ml.push(Move(from, to, flags));
     }
 }
 void MoveGen::addPawnMoves(uint64_t target, int shift_, int flags_ , MoveList& movelist){
@@ -54,6 +64,35 @@ void MoveGen::genPawn(Board& board, MoveList& movelist)
       addPawnMoves(captureLeft, -7, 4, movelist);
       addPawnMoves(captureRight, -9, 4, movelist);
     }
+
+  // En passant
+if (board.enPassant != -1)
+{
+    if (board.sideToMove == whiteOccupancy)
+    {
+        uint64_t enPassantTarget = 1ULL << board.enPassant;
+        if ((pawns << 7) & ~File_H & enPassantTarget)
+        {
+			addPawnMoves(enPassantTarget, 7, 8, movelist);
+        }
+        if ((pawns << 9) & ~File_A & enPassantTarget)
+		{
+            addPawnMoves(enPassantTarget, 9, 8, movelist);
+        }
+    }
+    else
+    {
+        uint64_t enPassantTarget = 1ULL << board.enPassant;
+        if ((pawns >> 7) & ~File_A & enPassantTarget)
+        {
+            addPawnMoves(enPassantTarget, -7, 8, movelist);
+        }
+        if ((pawns >> 9) & ~File_H & enPassantTarget)
+        {
+            addPawnMoves(enPassantTarget, -9, 8, movelist);
+        }
+    }
+}
   }
 
 // Knight
