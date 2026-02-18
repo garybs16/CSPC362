@@ -20,7 +20,7 @@ class Board{
         short int castling {1111};  
         bool sideToMove; /// 0 = white 1 = black
         int pieceOnSquare[64];
-
+        int enPassant = -1; // Square index for en passant target, -1 if not available
 
         Board();
         Board(bool isBlack);
