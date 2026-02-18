@@ -6,6 +6,7 @@
 
 Board::Board(){
     Board::sideToMove = 0;
+    int enPassant = -1;
     setEmpty();
 }; 
 Board::Board(bool isBlack_){
@@ -55,6 +56,8 @@ void Board::defaultBoard(){
     for(size_t i = 55; i >= 48; i--){
         piece_bitboard[bP] |= (1ULL << i);
     }
+    // Pawn En Passant
+    enPassant = -1;
     ///white rools
     piece_bitboard[R] |= (1ULL);
     piece_bitboard[R] |= (1ULL << 7);
