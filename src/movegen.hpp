@@ -34,6 +34,9 @@ class MoveGen{
         void genKnight(Board& board, MoveList& movelist);
         void genSlide(Board& board, MoveList& movelist); // Bihsop, Rook, Queen
 		void genKing(Board& board, MoveList& movelist);
+        bool isSquareAttacked(Board& board, int square);
+        void genCastling(Board& board, MoveList& movelist);
+
 };
 
 

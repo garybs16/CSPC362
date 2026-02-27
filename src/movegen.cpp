@@ -13,26 +13,21 @@ inline int popLSB(uint64_t& bitboard){
 }
 void MoveGen::addMoves(uint64_t targets, int from, int flags, MoveList& ml) {
     while (targets) {
-        int to = popLSB(targets);
+        int to_ = popLSB(targets);
 
 		// Promotion
-		if ((to_ >= 0 && to_ <= 7) || (to_ >= 56 && to_ <= 63))
-		{
-			movelist.push(Move(from_, to_, 8)) // Queen promotion
-			movelist.push(Move(from_, to_, 9)) // Rook promotion
-			movelist.push(Move(from_, to_, 10)) // Bishop promotion
-			movelist.push(Move(from_, to_, 11)); // Knight promotion
-		}
 		
-        ml.push(Move(from, to, flags));
+		
+        ml.push(Move(from, to_, flags));
     }
 }
-void MoveGen::addPawnMoves(uint64_t target, int shift_, int flags_ , MoveList& movelist){
+void MoveGen::addPawnMoves(uint64_t target, int shift_, int flags_ , MoveList& ml){
   
   while(target){
     int to_ = popLSB(target);
     int from_ = to_ - shift_;
-    movelist.push(Move(from_, to_, flags_));
+    
+    ml.push(Move(from_, to_, flags_));
   };
 }
 void MoveGen::genPawn(Board& board, MoveList& movelist)
@@ -52,6 +47,7 @@ void MoveGen::genPawn(Board& board, MoveList& movelist)
       uint64_t captureRight = (pawns << 9) & ~File_A & enemy;
       addPawnMoves(captureLeft, 7, 4, movelist);
       addPawnMoves(captureRight, 9, 4, movelist);
+      
     }
     else{
       uint64_t pushOne = (pawns >> 8) & empty;
@@ -64,6 +60,13 @@ void MoveGen::genPawn(Board& board, MoveList& movelist)
       addPawnMoves(captureLeft, -7, 4, movelist);
       addPawnMoves(captureRight, -9, 4, movelist);
     }
+    /*if ((to_ >= 0 && to_ <= 7) || (to_ >= 56 && to_ <= 63))
+		{
+			ml.push(Move(from_, to_, 8)); // Queen promotion
+			ml.push(Move(from_, to_, 9)); // Rook promotion
+			ml.push(Move(from_, to_, 10)); // Bishop promotion
+			ml.push(Move(from_, to_, 11)); // Knight promotion
+		} */
 
 	// En passant
 	if (board.enPassant != -1)
@@ -370,7 +373,8 @@ void MoveGen::genKing(Board& board, MoveList& movelist)
 
 // Attack check
 bool MoveGen::isSquareAttacked(Board& board, int square) 
-{
+{   
+    bool byWhite = board.sideToMove;
     uint64_t occupancy = board.occupancy[dualOccupancy];
     uint64_t enemyPawns = board.piece_bitboard[byWhite ? P : bP];
     uint64_t enemyKnights = board.piece_bitboard[byWhite ? N : bN];
@@ -388,7 +392,7 @@ bool MoveGen::isSquareAttacked(Board& board, int square)
         if ((enemyPawns >> 9) & ~File_H & (1ULL << square)) return true;
     }
     // Knight attacks
-    uint64_t position = 1ULL << squre;
+    uint64_t position = 1ULL << square;
 	uint64_t knightAttacks = 0ULL;
 	knightAttacks |= (position << 17) & ~File_H & enemyKnights;
 	knightAttacks |= (position << 10) & ~(File_G | File_H) & enemyKnights;
@@ -425,9 +429,10 @@ bool MoveGen::isSquareAttacked(Board& board, int square)
 }
 
 // Castling
+/*
 void MoveGen::genCastling(Board& board, MoveList& movelist) 
 {
-    if (board.sideToMove == white) 
+    if (board.sideToMove == 0) 
     {
         // White kingside
         if ((board.castlingRights & 1) && !(board.occupancy[dualOccupancy] & (1ULL << 5 | 1ULL << 6)) && !isSquareAttacked(board, 4) && !isSquareAttacked(board, 5) && !isSquareAttacked(board, 6)) {
@@ -453,7 +458,7 @@ void MoveGen::genCastling(Board& board, MoveList& movelist)
 
 
 // gen all
-
+*/
 void MoveGen::generateAll(Board& board, MoveList& ml){
   genPawn(board, ml);
     genSlide(board,ml);
