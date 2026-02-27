@@ -209,10 +209,11 @@ uint64_t MoveGen::getBishopAttacks(int square, uint64_t occupancy) {
     uint64_t occupancyBits = occupancy & mask;
     int magicIndex = (occupancyBits * BishopMagics[square]) >> (64 - BishopBits[square]);
     return bishopAttackTable[square][magicIndex];
+}
 uint64_t MoveGen::getQueenAttacks(int square, uint64_t occupancy) {
     return getRookAttacks(square, occupancy) | getBishopAttacks(square, occupancy);
 }
-}
+
 
 void MoveGen::includeMagic()
 {
@@ -454,5 +455,7 @@ void MoveGen::genCastling(Board& board, MoveList& movelist)
 // gen all
 
 void MoveGen::generateAll(Board& board, MoveList& ml){
-  nullptr;
+  genPawn(board, ml);
+    genSlide(board,ml);
+  genKnight(board,ml);
 }
