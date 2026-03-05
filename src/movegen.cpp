@@ -1,466 +1,377 @@
 #include "movegen.hpp"
-#include "move.hpp"
-#include "movelist.hpp"
-#include "magic.hpp"
 #include <bit>
 #include "def.hpp"
+
 using namespace Masks;
-// Pawn
-inline int popLSB(uint64_t& bitboard){
-  int index = std::countr_zero(bitboard);
-  bitboard &= ~(1ULL << index);
-  return index;
-}
-void MoveGen::addMoves(uint64_t targets, int from, int flags, MoveList& ml) {
-    while (targets) {
-        int to_ = popLSB(targets);
 
-		// Promotion
-		
-		
-        ml.push(Move(from, to_, flags));
+namespace {
+constexpr int kKnightOffsets[8][2] = {
+    {2, 1}, {2, -1}, {1, 2}, {1, -2},
+    {-1, 2}, {-1, -2}, {-2, 1}, {-2, -1}
+};
+
+constexpr int kKingOffsets[8][2] = {
+    {1, 0}, {1, 1}, {0, 1}, {-1, 1},
+    {-1, 0}, {-1, -1}, {0, -1}, {1, -1}
+};
+
+constexpr int kBishopDirections[4][2] = {
+    {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+};
+
+constexpr int kRookDirections[4][2] = {
+    {1, 0}, {-1, 0}, {0, 1}, {0, -1}
+};
+
+inline int popLSB(uint64_t& bitboard) {
+    const int index = std::countr_zero(bitboard);
+    bitboard &= (bitboard - 1);
+    return index;
+}
+
+bool IsOnBoard(int rank, int file) {
+    return rank >= 0 && rank < 8 && file >= 0 && file < 8;
+}
+
+int ToSquare(int rank, int file) {
+    return rank * 8 + file;
+}
+}
+
+void MoveGen::includeMagic() {
+}
+
+void MoveGen::addPromotionMoves(MoveList& movelist, int from, int to, bool capture) const {
+    if (capture) {
+        movelist.push(Move(from, to, CapturePromotionQueen));
+        movelist.push(Move(from, to, CapturePromotionRook));
+        movelist.push(Move(from, to, CapturePromotionBishop));
+        movelist.push(Move(from, to, CapturePromotionKnight));
+        return;
+    }
+
+    movelist.push(Move(from, to, PromotionQueen));
+    movelist.push(Move(from, to, PromotionRook));
+    movelist.push(Move(from, to, PromotionBishop));
+    movelist.push(Move(from, to, PromotionKnight));
+}
+
+void MoveGen::genPawn(const Board& board, MoveList& movelist) const {
+    uint64_t pawns = board.piece_bitboard[board.sideToMove ? bP : P];
+    const bool movingBlack = board.sideToMove;
+    const int forward = movingBlack ? -8 : 8;
+    const int startRank = movingBlack ? 6 : 1;
+    const int promotionRank = movingBlack ? 1 : 6;
+
+    while (pawns) {
+        const int from = popLSB(pawns);
+        const int rank = from / 8;
+        const int file = from % 8;
+        const int oneStep = from + forward;
+
+        if (oneStep >= 0 && oneStep < 64 && !board.isSquareOccupied(oneStep)) {
+            if (rank == promotionRank) {
+                addPromotionMoves(movelist, from, oneStep, false);
+            } else {
+                movelist.push(Move(from, oneStep, Quiet));
+                if (rank == startRank) {
+                    const int twoStep = from + (forward * 2);
+                    if (!board.isSquareOccupied(twoStep)) {
+                        movelist.push(Move(from, twoStep, DoublePawnPush));
+                    }
+                }
+            }
+        }
+
+        if (file > 0) {
+            const int captureLeft = from + (movingBlack ? -9 : 7);
+            if (captureLeft >= 0 && captureLeft < 64) {
+                if (board.isSidePiece(captureLeft, !movingBlack)) {
+                    if (rank == promotionRank) {
+                        addPromotionMoves(movelist, from, captureLeft, true);
+                    } else {
+                        movelist.push(Move(from, captureLeft, Capture));
+                    }
+                } else if (captureLeft == board.enPassant) {
+                    movelist.push(Move(from, captureLeft, EnPassant));
+                }
+            }
+        }
+
+        if (file < 7) {
+            const int captureRight = from + (movingBlack ? -7 : 9);
+            if (captureRight >= 0 && captureRight < 64) {
+                if (board.isSidePiece(captureRight, !movingBlack)) {
+                    if (rank == promotionRank) {
+                        addPromotionMoves(movelist, from, captureRight, true);
+                    } else {
+                        movelist.push(Move(from, captureRight, Capture));
+                    }
+                } else if (captureRight == board.enPassant) {
+                    movelist.push(Move(from, captureRight, EnPassant));
+                }
+            }
+        }
     }
 }
-void MoveGen::addPawnMoves(uint64_t target, int shift_, int flags_ , MoveList& ml){
-  
-  while(target){
-    int to_ = popLSB(target);
-    int from_ = to_ - shift_;
-    
-    ml.push(Move(from_, to_, flags_));
-  };
-}
-void MoveGen::genPawn(Board& board, MoveList& movelist)
-{
-    uint64_t empty = ~board.occupancy[dualOccupancy];
-    uint64_t pawns = board.piece_bitboard[P];
-    uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
-    bool sideToMove = board.sideToMove;
 
-    if (!board.sideToMove){
-      uint64_t pushOne = (pawns << 8) & empty;
-      uint64_t pushTwo = ((pushOne & RANK_3) << 8) & empty;
-      addPawnMoves(pushOne, 8, 0, movelist);
-      addPawnMoves(pushTwo, 16, 1, movelist);
-
-      uint64_t captureLeft = (pawns << 7) & ~File_H & enemy;
-      uint64_t captureRight = (pawns << 9) & ~File_A & enemy;
-      addPawnMoves(captureLeft, 7, 4, movelist);
-      addPawnMoves(captureRight, 9, 4, movelist);
-      
-    }
-    else{
-      uint64_t pushOne = (pawns >> 8) & empty;
-      uint64_t pushTwo = ((pushOne & RANK_3) >> 8) & empty;
-      addPawnMoves(pushOne, -8, 0, movelist);
-      addPawnMoves(pushTwo, -16, 1, movelist);
-
-      uint64_t captureLeft = (pawns << 7) & ~File_H & enemy;
-      uint64_t captureRight = (pawns << 9) & ~File_A & enemy;
-      addPawnMoves(captureLeft, -7, 4, movelist);
-      addPawnMoves(captureRight, -9, 4, movelist);
-    }
-    /*if ((to_ >= 0 && to_ <= 7) || (to_ >= 56 && to_ <= 63))
-		{
-			ml.push(Move(from_, to_, 8)); // Queen promotion
-			ml.push(Move(from_, to_, 9)); // Rook promotion
-			ml.push(Move(from_, to_, 10)); // Bishop promotion
-			ml.push(Move(from_, to_, 11)); // Knight promotion
-		} */
-
-	// En passant
-	if (board.enPassant != -1)
-	{
-		if (board.sideToMove == whiteOccupancy)
-		{
-       	 uint64_t enPassantTarget = 1ULL << board.enPassant;
-      	  if ((pawns << 7) & ~File_H & enPassantTarget)
-     	   {
-				addPawnMoves(enPassantTarget, 7, 8, movelist);
-     	   }
-     	   if ((pawns << 9) & ~File_A & enPassantTarget)
-			{
-     	       addPawnMoves(enPassantTarget, 9, 8, movelist);
-     		}
- 	  	 }
-	    else
-	    {
-   	     uint64_t enPassantTarget = 1ULL << board.enPassant;
-   	     if ((pawns >> 7) & ~File_A & enPassantTarget)
-    	    {
-     	       addPawnMoves(enPassantTarget, -7, 8, movelist);
-    	    }
-     	   if ((pawns >> 9) & ~File_H & enPassantTarget)
-     	   {
-     	       addPawnMoves(enPassantTarget, -9, 8, movelist);
-		   }
-		}
-}
-  }
-
-// Knight
-void MoveGen::genKnight(Board& board, MoveList& movelist)
-{
-    uint64_t empty = ~board.occupancy[dualOccupancy];
-    int knightsColor = board.sideToMove ? bN : N;
-    uint64_t knights = board.piece_bitboard[knightsColor];
-    uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy];
-    uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
-    bool sideToMove = board.sideToMove;
+void MoveGen::genKnight(const Board& board, MoveList& movelist) const {
+    uint64_t knights = board.piece_bitboard[board.sideToMove ? bN : N];
+    const bool movingBlack = board.sideToMove;
 
     while (knights) {
-        int from = popLSB(knights);
-        uint64_t position = 1ULL << from;
-        uint64_t attacks = 0ULL;
+        const int from = popLSB(knights);
+        const int rank = from / 8;
+        const int file = from % 8;
 
-        attacks |= (position << 17) & ~File_H & ~allies;
-        attacks |= (position << 10) & ~(File_G | File_H) & ~allies;
-        attacks |= (position >> 15) & ~File_A & ~allies;
-        attacks |= (position >> 6) & ~(File_G | File_H) & ~allies;
-        attacks |= (position << 15) & ~File_A & allies;
-        attacks |= (position << 6) & (File_A | File_B) & ~allies;
-        attacks |= (position >> 17) & ~File_H & ~allies;
-        attacks |= (position >> 10) & ~(File_A | File_B) & ~allies;
-
-        uint64_t capture = attacks & enemy;
-        uint64_t notCapture = attacks & ~enemy;
-        if (capture) {
-            addMoves(capture, from, 4, movelist);
-        }
-        if (notCapture) {
-            addMoves(notCapture, from, 0, movelist);
-        }
-    }
-}
-
-uint64_t MoveGen::maskRookAttacks(int square) {
-    uint64_t attacks = 0ULL;
-    int r = square / 8;
-    int f = square % 8;
-
-    for (int r2 = r + 1; r2 < 7; r2++) attacks |= (1ULL << (r2 * 8 + f));
-    for (int r2 = r - 1; r2 > 0; r2--) attacks |= (1ULL << (r2 * 8 + f));
-    for (int f2 = f + 1; f2 < 7; f2++) attacks |= (1ULL << (r * 8 + f2));
-    for (int f2 = f - 1; f2 > 0; f2--) attacks |= (1ULL << (r * 8 + f2));
-    return attacks;
-}
-// Generating sliding pieces attacks map
-// Runs only onece when starts up to fill the attack tables for magic bitboards
-uint64_t MoveGen::generateRookAttacks(int square, uint64_t occupancy) {
-    uint64_t attacks = 0ULL;
-	int r = square / 8;
-	int f = square % 8;
-
-    for (int r2 = r + 1; r2 <= 7; r2++)
-    {
-        attacks |= (1ULL << (r2 * 8 + f));
-		if (occupancy & (1ULL << (r2 * 8 + f))) break;
-    }
-    for (int r2 = r - 1; r2 >= 0; r2--)
-    {
-		attacks |= (1ULL << (r2 * 8 + f));
-        if (occupancy & (1ULL << (r2 * 8 + f))) break;
-    }
-    for (int f2 = f + 1; f2 <= 7; f2++)
-	{
-        attacks |= (1ULL << (r * 8 + f2));
-        if (occupancy & (1ULL << (r * 8 + f2))) break;
-    }
-    for (int f2 = f - 1; f2 >= 0; f2--)
-    {
-        attacks |= (1ULL << (r * 8 + f2));
-        if (occupancy & (1ULL << (r * 8 + f2))) break;
-    }
-	return attacks;
-}
-uint64_t MoveGen::generateBishopAttacks(int square, uint64_t occupancy) {
-    uint64_t attacks = 0ULL;
-    int r = square / 8;
-    int f = square % 8;
-    for (int r2 = r + 1, f2 = f + 1; r2 <= 7 && f2 <= 7; r2++, f2++)
-    {
-        attacks |= (1ULL << (r2 * 8 + f2));
-        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
-    }
-    for (int r2 = r + 1, f2 = f - 1; r2 <= 7 && f2 >= 0; r2++, f2--)
-    {
-        attacks |= (1ULL << (r2 * 8 + f2));
-        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
-    }
-    for (int r2 = r - 1, f2 = f + 1; r2 >= 0 && f2 <= 7; r2--, f2++)
-    {
-        attacks |= (1ULL << (r2 * 8 + f2));
-        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
-    }
-    for (int r2 = r - 1, f2 = f - 1; r2 >= 0 && f2 >= 0; r2--, f2--)
-    {
-        attacks |= (1ULL << (r2 * 8 + f2));
-        if (occupancy & (1ULL << (r2 * 8 + f2))) break;
-    }
-    return attacks;
-}
-
-// Attacks
-uint64_t MoveGen::getRookAttacks(int square, uint64_t occupancy) {
-    uint64_t mask = rookMasks[square];
-    uint64_t occupancyBits = occupancy & mask;
-    int magicIndex = (occupancyBits * RookMagics[square]) >> (64 - RookBits[square]);
-    return rookAttackTable[square][magicIndex];
-}
-uint64_t MoveGen::getBishopAttacks(int square, uint64_t occupancy) {
-    uint64_t mask = bishopMasks[square];
-    uint64_t occupancyBits = occupancy & mask;
-    int magicIndex = (occupancyBits * BishopMagics[square]) >> (64 - BishopBits[square]);
-    return bishopAttackTable[square][magicIndex];
-}
-uint64_t MoveGen::getQueenAttacks(int square, uint64_t occupancy) {
-    return getRookAttacks(square, occupancy) | getBishopAttacks(square, occupancy);
-}
-
-
-void MoveGen::includeMagic()
-{
-    for (int bd = 0; bd < 64; bd++)
-    {
-        rookMasks[bd] = maskRookAttacks(bd);
-		bishopMasks[bd] = maskBishopAttacks(bd);
-		int rookBits = RookBits[bd];
-		int bishopBits = BishopBits[bd];
-		int rookOccupancyVariations = 1 << rookBits;
-		int bishopOccupancyVariations = 1 << bishopBits;
-
-        for (int i = 0; i < bishopOccupancyVariations; i++)
-        {
-            uint64_t occupancy = 0ULL;
-            uint64_t mask = bishopMasks[bd];
-            int boardIndex = i;
-            while (mask) {
-                int bitIndex = popLSB(mask);
-                mask &= ~(1ULL << bitIndex);
-                if (boardIndex & 1) {
-                    occupancy |= (1ULL << bitIndex);
-                }
-				boardIndex >>= 1;
+        for (const auto& offset : kKnightOffsets) {
+            const int toRank = rank + offset[0];
+            const int toFile = file + offset[1];
+            if (!IsOnBoard(toRank, toFile)) {
+                continue;
             }
-			uint64_t magicIndex = (occupancy * BishopMagics[bd]) >> (64 - bishopBits);
-			uint64_t attacks = generateBishopAttacks(bd, occupancy);
-			bishopAttackTable[bd][magicIndex] = attacks;
-        }
-        for (int i = 0; i < rookOccupancyVariations; i++) {
-            uint64_t occupancy = 0ULL;
-            uint64_t mask = rookMasks[bd];
-            int boardIndex = i;
 
-            while (mask) {
-				int bitIndex = popLSB(mask);
-				mask &= ~(1ULL << bitIndex);
-                if (boardIndex & 1) {
-                    occupancy |= (1ULL << bitIndex);
-                }
-				boardIndex >>= 1;
+            const int to = ToSquare(toRank, toFile);
+            if (board.isSidePiece(to, movingBlack)) {
+                continue;
             }
-			uint64_t magicIndex = (occupancy * RookMagics[bd]) >> (64 - rookBits);
-			uint64_t attacks = generateRookAttacks(bd, occupancy);
-			rookAttackTable[bd][magicIndex] = attacks;
+
+            movelist.push(Move(from, to, board.isSidePiece(to, !movingBlack) ? Capture : Quiet));
         }
     }
 }
-// Sliding Pieces
-void MoveGen::genSlide(Board& board, MoveList& movelist)
-{
-	uint64_t empty = ~board.occupancy[dualOccupancy];
-	int bishopsColor = board.sideToMove ? bB : B;
-	int rooksColor = board.sideToMove ? bR : R;
-	int queensColor = board.sideToMove ? bQ : Q;
-    uint64_t bishops = board.piece_bitboard[bishopsColor];
-    uint64_t rooks = board.piece_bitboard[rooksColor];
-	uint64_t queens = board.piece_bitboard[queensColor];
-    
-	uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy];
-	uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
-	uint64_t occupancy = board.occupancy[dualOccupancy];
 
-    while (bishops)
-    {
-        int from = popLSB(bishops);
-        uint64_t attacks = getBishopAttacks(from, occupancy) & ~allies;
-        uint64_t capture = attacks & enemy;
-        uint64_t notCapture = attacks & ~enemy;
-        if (capture) {
-            addMoves(capture, from, 4, movelist);
+void MoveGen::genSlide(const Board& board, MoveList& movelist) const {
+    const bool movingBlack = board.sideToMove;
+    uint64_t bishops = board.piece_bitboard[movingBlack ? bB : B];
+    uint64_t rooks = board.piece_bitboard[movingBlack ? bR : R];
+    uint64_t queens = board.piece_bitboard[movingBlack ? bQ : Q];
+
+    auto addSlidingMoves = [&](uint64_t pieces, const int directions[][2], int directionCount) {
+        while (pieces) {
+            const int from = popLSB(pieces);
+            const int rank = from / 8;
+            const int file = from % 8;
+
+            for (int i = 0; i < directionCount; ++i) {
+                int toRank = rank + directions[i][0];
+                int toFile = file + directions[i][1];
+
+                while (IsOnBoard(toRank, toFile)) {
+                    const int to = ToSquare(toRank, toFile);
+                    if (board.isSidePiece(to, movingBlack)) {
+                        break;
+                    }
+                    if (board.isSidePiece(to, !movingBlack)) {
+                        movelist.push(Move(from, to, Capture));
+                        break;
+                    }
+
+                    movelist.push(Move(from, to, Quiet));
+                    toRank += directions[i][0];
+                    toFile += directions[i][1];
+                }
+            }
         }
-        if (notCapture) {
-            addMoves(notCapture, from, 0, movelist);
-		}
-    }
-    while (rooks)
-    {
-        int from = popLSB(rooks);
-        uint64_t attacks = getRookAttacks(from, occupancy) & ~allies;
-        uint64_t capture = attacks & enemy;
-        uint64_t notCapture = attacks & ~enemy;
-        if (capture) {
-            addMoves(capture, from, 4, movelist);
-        }
-        if (notCapture) {
-            addMoves(notCapture, from, 0, movelist);
-        }
-    }
-    while (queens)
-    {
-        int from = popLSB(queens);
-        uint64_t attacks = (getBishopAttacks(from, occupancy) | getRookAttacks(from, occupancy)) & ~allies;
-        uint64_t capture = attacks & enemy;
-        uint64_t notCapture = attacks & ~enemy;
-        if (capture) {
-            addMoves(capture, from, 4, movelist);
-        }
-        if (notCapture) {
-            addMoves(notCapture, from, 0, movelist);
-        }
-    }
-    
+    };
+
+    addSlidingMoves(bishops, kBishopDirections, 4);
+    addSlidingMoves(rooks, kRookDirections, 4);
+
+    constexpr int kQueenDirections[8][2] = {
+        {1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1}
+    };
+    addSlidingMoves(queens, kQueenDirections, 8);
 }
 
+void MoveGen::genCastling(const Board& board, MoveList& movelist) const {
+    if (board.sideToMove) {
+        if ((board.castling & BlackKingSide) &&
+            board.getPieceAt(60) == bK &&
+            board.getPieceAt(63) == bR &&
+            !board.isSquareOccupied(61) &&
+            !board.isSquareOccupied(62) &&
+            !isSquareAttacked(board, 60, false) &&
+            !isSquareAttacked(board, 61, false) &&
+            !isSquareAttacked(board, 62, false)) {
+            movelist.push(Move(60, 62, KingSideCastle));
+        }
 
-//
-// =========================
-// KING MOVE GENERATION ADDED
-// =========================
-//
-void MoveGen::genKing(Board& board, MoveList& movelist)
-{
-    int kingPiece = board.sideToMove ? bK : K;
-    uint64_t king = board.piece_bitboard[kingPiece];
-
-    if (!king) return;
-
-    int from = popLSB(king);
-    uint64_t position = 1ULL << from;
-
-    uint64_t allies = board.occupancy[board.sideToMove ? blackOccupancy : whiteOccupancy];
-    uint64_t enemy = board.occupancy[board.sideToMove ? whiteOccupancy : blackOccupancy];
-
-    uint64_t attacks = 0ULL;
-
-    // Vertical
-    attacks |= (position << 8);
-    attacks |= (position >> 8);
-
-    // Horizontal
-    attacks |= (position << 1) & ~File_A;
-    attacks |= (position >> 1) & ~File_H;
-
-    // Diagonals
-    attacks |= (position << 9) & ~File_A;
-    attacks |= (position << 7) & ~File_H;
-    attacks |= (position >> 7) & ~File_A;
-    attacks |= (position >> 9) & ~File_H;
-
-    // Remove friendly squares
-    attacks &= ~allies;
-
-    uint64_t capture = attacks & enemy;
-    uint64_t notCapture = attacks & ~enemy;
-
-    if (capture) {
-        addMoves(capture, from, 4, movelist);
+        if ((board.castling & BlackQueenSide) &&
+            board.getPieceAt(60) == bK &&
+            board.getPieceAt(56) == bR &&
+            !board.isSquareOccupied(57) &&
+            !board.isSquareOccupied(58) &&
+            !board.isSquareOccupied(59) &&
+            !isSquareAttacked(board, 60, false) &&
+            !isSquareAttacked(board, 59, false) &&
+            !isSquareAttacked(board, 58, false)) {
+            movelist.push(Move(60, 58, QueenSideCastle));
+        }
+        return;
     }
-    if (notCapture) {
-        addMoves(notCapture, from, 0, movelist);
+
+    if ((board.castling & WhiteKingSide) &&
+        board.getPieceAt(4) == K &&
+        board.getPieceAt(7) == R &&
+        !board.isSquareOccupied(5) &&
+        !board.isSquareOccupied(6) &&
+        !isSquareAttacked(board, 4, true) &&
+        !isSquareAttacked(board, 5, true) &&
+        !isSquareAttacked(board, 6, true)) {
+        movelist.push(Move(4, 6, KingSideCastle));
+    }
+
+    if ((board.castling & WhiteQueenSide) &&
+        board.getPieceAt(4) == K &&
+        board.getPieceAt(0) == R &&
+        !board.isSquareOccupied(1) &&
+        !board.isSquareOccupied(2) &&
+        !board.isSquareOccupied(3) &&
+        !isSquareAttacked(board, 4, true) &&
+        !isSquareAttacked(board, 3, true) &&
+        !isSquareAttacked(board, 2, true)) {
+        movelist.push(Move(4, 2, QueenSideCastle));
     }
 }
 
-// Attack check
-bool MoveGen::isSquareAttacked(Board& board, int square) 
-{   
-    bool byWhite = board.sideToMove;
-    uint64_t occupancy = board.occupancy[dualOccupancy];
-    uint64_t enemyPawns = board.piece_bitboard[byWhite ? P : bP];
-    uint64_t enemyKnights = board.piece_bitboard[byWhite ? N : bN];
-    uint64_t enemyBishops = board.piece_bitboard[byWhite ? B : bB];
-    uint64_t enemyRooks = board.piece_bitboard[byWhite ? R : bR];
-    uint64_t enemyQueens = board.piece_bitboard[byWhite ? Q : bQ];
-    uint64_t enemyKing = board.piece_bitboard[byWhite ? K : bK];
+void MoveGen::genKing(const Board& board, MoveList& movelist) const {
+    const bool movingBlack = board.sideToMove;
+    uint64_t kingBoard = board.piece_bitboard[movingBlack ? bK : K];
+    if (!kingBoard) {
+        return;
+    }
 
-    // Pawn attacks
-    if (byWhite) {
-        if ((enemyPawns << 7) & ~File_H & (1ULL << square)) return true;
-        if ((enemyPawns << 9) & ~File_A & (1ULL << square)) return true;
+    const int from = popLSB(kingBoard);
+    const int rank = from / 8;
+    const int file = from % 8;
+
+    for (const auto& offset : kKingOffsets) {
+        const int toRank = rank + offset[0];
+        const int toFile = file + offset[1];
+        if (!IsOnBoard(toRank, toFile)) {
+            continue;
+        }
+
+        const int to = ToSquare(toRank, toFile);
+        if (board.isSidePiece(to, movingBlack)) {
+            continue;
+        }
+
+        movelist.push(Move(from, to, board.isSidePiece(to, !movingBlack) ? Capture : Quiet));
+    }
+
+    genCastling(board, movelist);
+}
+
+bool MoveGen::isSquareAttacked(const Board& board, int square, bool byBlack) const {
+    if (square < 0 || square > 63) {
+        return false;
+    }
+
+    const uint64_t squareBit = 1ULL << square;
+    if (byBlack) {
+        const uint64_t pawnAttacks =
+            ((board.piece_bitboard[bP] & ~File_H) >> 7) |
+            ((board.piece_bitboard[bP] & ~File_A) >> 9);
+        if (pawnAttacks & squareBit) {
+            return true;
+        }
     } else {
-        if ((enemyPawns >> 7) & ~File_A & (1ULL << square)) return true;
-        if ((enemyPawns >> 9) & ~File_H & (1ULL << square)) return true;
+        const uint64_t pawnAttacks =
+            ((board.piece_bitboard[P] & ~File_A) << 7) |
+            ((board.piece_bitboard[P] & ~File_H) << 9);
+        if (pawnAttacks & squareBit) {
+            return true;
+        }
     }
-    // Knight attacks
-    uint64_t position = 1ULL << square;
-	uint64_t knightAttacks = 0ULL;
-	knightAttacks |= (position << 17) & ~File_H & enemyKnights;
-	knightAttacks |= (position << 10) & ~(File_G | File_H) & enemyKnights;
-	knightAttacks |= (position >> 15) & ~File_A & enemyKnights;
-	knightAttacks |= (position >> 6) & ~(File_G | File_H) & enemyKnights;
-	knightAttacks |= (position << 15) & ~File_A & enemyKnights;
-	knightAttacks |= (position << 6) & ~(File_A | File_B) & enemyKnights;
-	knightAttacks |= (position >> 17) & ~File_H & enemyKnights;
-	knightAttacks |= (position >> 10) & ~(File_A | File_B) & enemyKnights;
-	if (knightAttacks) return true;
 
-    // Bishop attacks
-    if ((getBishopAttacks(square, occupancy) & (enemyBishops | enemyQueens)) != 0) return true;
+    const int rank = square / 8;
+    const int file = square % 8;
+    const int knightPiece = byBlack ? bN : N;
+    const int kingPiece = byBlack ? bK : K;
 
-    // Rook attacks
-    if ((getRookAttacks(square, occupancy) & (enemyRooks | enemyQueens)) != 0) return true;
+    for (const auto& offset : kKnightOffsets) {
+        const int fromRank = rank - offset[0];
+        const int fromFile = file - offset[1];
+        if (!IsOnBoard(fromRank, fromFile)) {
+            continue;
+        }
+        if (board.getPieceAt(ToSquare(fromRank, fromFile)) == knightPiece) {
+            return true;
+        }
+    }
 
-	// Queen attacks
-	if ((getQueenAttacks(square, occupancy) & enemyQueens) != 0) return true;
+    for (const auto& offset : kKingOffsets) {
+        const int fromRank = rank + offset[0];
+        const int fromFile = file + offset[1];
+        if (!IsOnBoard(fromRank, fromFile)) {
+            continue;
+        }
+        if (board.getPieceAt(ToSquare(fromRank, fromFile)) == kingPiece) {
+            return true;
+        }
+    }
 
-    // King attacks
-	uint64_t kingAttacks = 0ULL;
-	kingAttacks |= (position << 8) & enemyKing;
-	kingAttacks |= (position << 8) & enemyKing;
-	kingAttacks |= (position >> 1) & ~File_A & enemyKing;
-	kingAttacks |= (position >> 1) & ~File_H & enemyKing;
-	kingAttacks |= (position << 9) & ~File_A & enemyKing;
-	kingAttacks |= (position << 7) & ~File_A & enemyKing;
-	kingAttacks |= (position >> 9) & ~File_H & enemyKing;
-	kingAttacks |= (position >> 7) & ~File_H & enemyKing;
-	if (kingAttacks) return true;
+    auto rayHitsAttacker = [&](const int directions[][2], int directionCount, int pieceA, int pieceB) {
+        for (int i = 0; i < directionCount; ++i) {
+            int toRank = rank + directions[i][0];
+            int toFile = file + directions[i][1];
+
+            while (IsOnBoard(toRank, toFile)) {
+                const int piece = board.getPieceAt(ToSquare(toRank, toFile));
+                if (piece == -1) {
+                    toRank += directions[i][0];
+                    toFile += directions[i][1];
+                    continue;
+                }
+
+                if (piece == pieceA || piece == pieceB) {
+                    return true;
+                }
+                break;
+            }
+        }
+        return false;
+    };
+
+    if (rayHitsAttacker(kBishopDirections, 4, byBlack ? bB : B, byBlack ? bQ : Q)) {
+        return true;
+    }
+    if (rayHitsAttacker(kRookDirections, 4, byBlack ? bR : R, byBlack ? bQ : Q)) {
+        return true;
+    }
 
     return false;
 }
 
-// Castling
-/*
-void MoveGen::genCastling(Board& board, MoveList& movelist) 
-{
-    if (board.sideToMove == 0) 
-    {
-        // White kingside
-        if ((board.castlingRights & 1) && !(board.occupancy[dualOccupancy] & (1ULL << 5 | 1ULL << 6)) && !isSquareAttacked(board, 4) && !isSquareAttacked(board, 5) && !isSquareAttacked(board, 6)) {
-            movelist.push(Move(4, 6, 2)); 
-        }
-        // White queenside
-        if ((board.castlingRights & 2) && !(board.occupancy[dualOccupancy] & (1ULL << 1 | 1ULL << 2 | 1ULL << 3)) && !isSquareAttacked(board, 4) && !isSquareAttacked(board, 3) && !isSquareAttacked(board, 2)) {
-            movelist.push(Move(4, 2, 2)); 
-        }
-    } 
-    else 
-    {
-        // Black kingside
-        if ((board.castlingRights & 4) && !(board.occupancy[dualOccupancy] & (1ULL << 61 | 1ULL << 62)) && !isSquareAttacked(board, 60) && !isSquareAttacked(board, 61) && !isSquareAttacked(board, 62)) {
-            movelist.push(Move(60, 62, 2)); 
-        }
-        // Black queenside
-        if ((board.castlingRights & 8) && !(board.occupancy[dualOccupancy] & (1ULL << 57 | 1ULL << 58 | 1ULL << 59)) && !isSquareAttacked(board, 60) && !isSquareAttacked(board, 59) && !isSquareAttacked(board, 58)) {
-            movelist.push(Move(60, 58, 2)); 
-        }
-    }
+void MoveGen::generatePseudoLegal(const Board& board, MoveList& ml) const {
+    ml.clear();
+    genPawn(board, ml);
+    genKnight(board, ml);
+    genSlide(board, ml);
+    genKing(board, ml);
 }
 
+bool MoveGen::isInCheck(const Board& board, bool blackSide) const {
+    const int kingSquare = board.findKing(blackSide);
+    return kingSquare != -1 && isSquareAttacked(board, kingSquare, !blackSide);
+}
 
-// gen all
-*/
-void MoveGen::generateAll(Board& board, MoveList& ml){
-  genPawn(board, ml);
-    genSlide(board,ml);
-  genKnight(board,ml);
+void MoveGen::generateAll(const Board& board, MoveList& ml) const {
+    MoveList pseudoLegal;
+    generatePseudoLegal(board, pseudoLegal);
+
+    ml.clear();
+    const bool movingBlack = board.sideToMove;
+    for (int i = 0; i < pseudoLegal.count; ++i) {
+        Board next(board);
+        if (!next.makeMove(pseudoLegal.moves[i])) {
+            continue;
+        }
+        if (!isInCheck(next, movingBlack)) {
+            ml.push(pseudoLegal.moves[i]);
+        }
+    }
 }
