@@ -3,7 +3,16 @@
 
 
 struct Evaluate{
+
+    Board board;
+    int materialScore;
+    int positionScore;
+    int totalScore;
+
+    Evaluate(const Board& board);
     void materialBalance();
+    void positionBalance();
+    void evaluateTotal();
 };
 
 
