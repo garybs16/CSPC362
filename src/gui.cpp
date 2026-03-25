@@ -22,6 +22,7 @@ struct GuiState {
     int selectedSquare = -1;
     bool gameOver = false;
     std::string statusText;
+    int totalScore = 0;
 };
 
 char PieceLabel(int pieceId) {
@@ -73,12 +74,22 @@ void RefreshGameState(GuiState& state) {
     state.legalMoves.clear();
     state.moveGen.generateAll(state.board, state.legalMoves);
 
+    Evaluate evaluation(state.board)
+    evaluation.evaluateTotal();
+    state.totalScore = evaluation.totalScore;
+
     const bool blackToMove = state.board.sideToMove;
     const bool inCheck = state.moveGen.isInCheck(state.board, blackToMove);
     if (state.legalMoves.count == 0) {
         state.gameOver = true;
         if (inCheck) {
             state.statusText = std::string(blackToMove ? "Black" : "White") + " is checkmated";
+            if(balckToMove){
+                    state.totalScore += 1000;
+                }
+            else{
+                state.totalScore -= 1000;
+            }
         } else {
             state.statusText = "Stalemate";
         }
