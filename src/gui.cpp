@@ -2,11 +2,17 @@
 #include "board.hpp"
 #include "move.hpp"
 #include "movegen.hpp"
+#include "evaluate.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
 #include <string>
+
+#include <objidl.h>
+#include <gdiplus.h>
+using namespace Gdiplus;
+#pragma comment(lib, "gdiplus.lib")
 
 namespace {
 constexpr int kBoardPixels = 640;
@@ -24,6 +30,43 @@ struct GuiState {
     std::string statusText;
     int totalScore = 0;
 };
+
+// Image set
+Image* pieceImages[12] = {};
+ULONG_PTR gdiPlusToken = 0;
+
+void DrawPieceImage(HDC hdc, Image* image, int x, int y, int width, int height)
+{
+    Graphics graphics(hdc);
+    graphics.DrawImage(image, x, y, width, height);
+}
+
+void InitGdiPlus()
+{
+    GdiplusStartupInput gdiplusStartupInput;
+    GdiplusStartup(&gdiPlusToken, &gdiplusStartupInput, NULL);
+}
+
+void ShutdownGdiPlus()
+{
+    if (gdiPlusToken != 0)
+    {
+        GdiplusShutdown(gdiPlusToken);
+        gdiPlusToken = 0;
+    }
+}
+
+void FreePieceImages()
+{
+    for (int i = 0; i < 12; ++i)
+    {
+        if (pieceImages[i] != nullptr)
+        {
+            delete pieceImages[i];
+            pieceImages[i] = nullptr;
+        }
+    }
+}
 
 char PieceLabel(int pieceId) {
     static const char kLabels[12] = {'P', 'N', 'B', 'R', 'Q', 'K', 'p', 'n', 'b', 'r', 'q', 'k'};
@@ -74,7 +117,7 @@ void RefreshGameState(GuiState& state) {
     state.legalMoves.clear();
     state.moveGen.generateAll(state.board, state.legalMoves);
 
-    Evaluate evaluation(state.board)
+    Evaluate evaluation(state.board);
     evaluation.evaluateTotal();
     state.totalScore = evaluation.totalScore;
 
@@ -84,7 +127,7 @@ void RefreshGameState(GuiState& state) {
         state.gameOver = true;
         if (inCheck) {
             state.statusText = std::string(blackToMove ? "Black" : "White") + " is checkmated";
-            if(balckToMove){
+            if(blackToMove){
                     state.totalScore += 1000;
                 }
             else{
@@ -213,8 +256,11 @@ void DrawBoard(HDC hdc, GuiState& state) {
             if (piece != -1) {
                 const char label = PieceLabel(piece);
                 char text[2] = {label, '\0'};
+                DrawPieceImage(hdc, pieceImages[piece], x, y, kCellPixels, kCellPixels);
+                /*
                 SetTextColor(hdc, (piece <= 5) ? RGB(250, 250, 250) : RGB(15, 15, 15));
                 DrawTextA(hdc, text, 1, &cell, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                */
             }
         }
     }
@@ -273,13 +319,33 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
         }
+        // Prevent erasing background
+        case WM_ERASEBKGND: {
+            return 1;
+            }
         case WM_PAINT: {
             if (!state) {
                 return 0;
             }
             PAINTSTRUCT ps;
+            // Prevent flickering
             HDC hdc = BeginPaint(hwnd, &ps);
-            DrawBoard(hdc, *state);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+
+            int width = rc.right - rc.left;
+            int height = rc.bottom - rc.top;
+            HDC memDC = CreateCompatibleDC(hdc);
+
+            HBITMAP memBitmap = CreateCompatibleBitmap(hdc, width, height);
+            HBITMAP oldBitmap = static_cast<HBITMAP>(SelectObject(memDC, memBitmap));
+
+            DrawBoard(memDC, *state);
+            BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
+            SelectObject(memDC, oldBitmap);
+            DeleteObject(memBitmap);
+            DeleteDC(memDC);
+            //
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -297,7 +363,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int RunChessGui() {
     HINSTANCE instance = GetModuleHandle(nullptr);
     const char* className = "ChessWindowClass";
-
+    
+    InitGdiPlus();
+    InitPieceImages();
+    
     WNDCLASSA wc = {};
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = instance;
