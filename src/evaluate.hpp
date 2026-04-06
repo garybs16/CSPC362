@@ -1,6 +1,6 @@
 #ifndef EVALUATE_HPP
 #define EVALUATE_HPP
-
+#include "board.hpp"
 
 struct Evaluate{
 
