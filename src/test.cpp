@@ -1,4 +1,5 @@
 #include <iostream>
+#include "ai.hpp"
 #include "board.hpp"
 #include "movegen.hpp"
 
@@ -85,7 +86,7 @@ int main() {
         board.sideToMove = false;
         board.enPassant = 43;
         PlacePiece(board, K, 4);
-        PlacePiece(board, bK, 60);
+        PlacePiece(board, bK, 62);
         PlacePiece(board, P, 36);
         PlacePiece(board, bP, 35);
         board.updateOccupancy();
@@ -114,6 +115,24 @@ int main() {
         ok &= Expect(moves.contains(48, 56, PromotionQueen), "promotion move should be generated");
         ok &= Expect(board.makeMove(Move(48, 56, PromotionQueen)), "promotion move should apply");
         ok &= Expect(board.getPieceAt(56) == Q, "white pawn should promote to a queen");
+    }
+
+    {
+        Board board;
+        board.setEmpty();
+        board.castling = 0;
+        board.sideToMove = false;
+        board.enPassant = -1;
+        PlacePiece(board, K, 4);
+        PlacePiece(board, Q, 3);
+        PlacePiece(board, bQ, 59);
+        PlacePiece(board, bK, 62);
+        board.updateOccupancy();
+
+        ChessAi ai;
+        Move chosenMove;
+        ok &= Expect(ai.findMove(board, moveGen, RobotDifficulty::Hard, chosenMove), "AI should find a move in a legal position");
+        ok &= Expect(chosenMove.getFrom() == 3 && chosenMove.getTo() == 59, "AI should capture the hanging queen");
     }
 
     if (!ok) {
