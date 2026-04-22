@@ -151,26 +151,25 @@ int ChessAi::scoreMove(const Board& board, const Move& move) const {
 
 int ChessAi::depthForDifficulty(RobotDifficulty difficulty) const {
     switch (difficulty) {
-        case RobotDifficulty::Beginner:
-            return 1;
         case RobotDifficulty::Easy:
             return 2;
         case RobotDifficulty::Medium:
             return 3;
         case RobotDifficulty::Hard:
             return 4;
+        case RobotDifficulty::Grandmaster:
+            return 5;
     }
     return 2;
 }
 
 int ChessAi::candidateCountForDifficulty(RobotDifficulty difficulty) const {
     switch (difficulty) {
-        case RobotDifficulty::Beginner:
-            return 4;
         case RobotDifficulty::Easy:
             return 2;
         case RobotDifficulty::Medium:
         case RobotDifficulty::Hard:
+        case RobotDifficulty::Grandmaster:
             return 1;
     }
     return 1;

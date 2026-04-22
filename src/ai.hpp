@@ -6,10 +6,10 @@
 #include "movegen.hpp"
 
 enum class RobotDifficulty {
-    Beginner,
     Easy,
     Medium,
-    Hard
+    Hard,
+    Grandmaster
 };
 
 class ChessAi {

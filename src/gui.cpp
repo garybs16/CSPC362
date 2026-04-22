@@ -18,8 +18,8 @@ constexpr int kBoardPixels = 896;
 constexpr int kCellPixels = kBoardPixels / 8;
 constexpr int kPadding = 32;
 constexpr int kPanelWidth = 336;
-constexpr int kPanelHeight = kBoardPixels;
 constexpr int kStatusHeight = 96;
+constexpr int kPanelHeight = kBoardPixels + kStatusHeight + 16;
 constexpr int kWindowWidth = kBoardPixels + kPanelWidth + (kPadding * 3);
 constexpr int kWindowHeight = kBoardPixels + kStatusHeight + (kPadding * 2);
 constexpr int kBoardBorder = 10;
@@ -50,6 +50,7 @@ struct GuiState {
     ChessAi ai;
     MoveList legalMoves;
     int selectedSquare = -1;
+    bool gameStarted = false;
     bool gameOver = false;
     bool gameOverMessageShown = false;
     bool hasLastMove = false;
@@ -77,36 +78,6 @@ wchar_t PieceGlyph(int pieceId) {
 
 const char* ModeLabel(GameMode mode) {
     return mode == GameMode::HumanVsRobot ? "Vs Robot" : "Human vs Human";
-}
-
-const char* DifficultyLabel(RobotDifficulty difficulty) {
-    switch (difficulty) {
-        case RobotDifficulty::Beginner:
-            return "Beginner";
-        case RobotDifficulty::Easy:
-            return "Easy";
-        case RobotDifficulty::Medium:
-            return "Medium";
-        case RobotDifficulty::Hard:
-            return "Hard";
-    }
-    return "Easy";
-}
-
-const char* TimeControlLabel(TimeControlPreset preset) {
-    switch (preset) {
-        case TimeControlPreset::Bullet1:
-            return "1|0";
-        case TimeControlPreset::Blitz3:
-            return "3|0";
-        case TimeControlPreset::Blitz5:
-            return "5|0";
-        case TimeControlPreset::Rapid10:
-            return "10|0";
-        case TimeControlPreset::Rapid15:
-            return "15|0";
-    }
-    return "5|0";
 }
 
 const char* HumanSideLabel(bool humanPlaysBlack) {
@@ -174,41 +145,39 @@ RECT PanelRect() {
 }
 
 RECT NewGameRect() {
+    const int availableWidth = kPanelWidth - 48;
+    const int spacing = 12;
+    const int buttonWidth = (availableWidth - spacing) / 2;
+    return MakeRect(PanelLeft() + 24, kPadding + 294, buttonWidth, kButtonHeight);
+}
+
+RECT StartRect() {
     return MakeRect(PanelLeft() + 24, kPadding + 236, kPanelWidth - 48, kButtonHeight);
 }
 
-RECT ModeRect() {
-    return MakeRect(PanelLeft() + 24, kPadding + 294, kPanelWidth - 48, kButtonHeight);
+RECT SurrenderRect() {
+    const int availableWidth = kPanelWidth - 48;
+    const int spacing = 12;
+    const int buttonWidth = (availableWidth - spacing) / 2;
+    return MakeRect(PanelLeft() + 24 + buttonWidth + spacing, kPadding + 294, buttonWidth, kButtonHeight);
 }
 
-RECT SideRect() {
+RECT ModeRect() {
     return MakeRect(PanelLeft() + 24, kPadding + 352, kPanelWidth - 48, kButtonHeight);
 }
 
+RECT SideRect() {
+    return MakeRect(PanelLeft() + 24, kPadding + 410, kPanelWidth - 48, kButtonHeight);
+}
+
 RECT DifficultyRect(int index) {
-    const int availableWidth = kPanelWidth - 48;
-    const int spacing = 12;
-    const int buttonWidth = (availableWidth - spacing) / 2;
-    const int row = index / 2;
-    const int column = index % 2;
-    const int left = PanelLeft() + 24 + (column * (buttonWidth + spacing));
-    const int top = kPadding + 470 + (row * (kButtonHeight + kButtonGap));
-    return MakeRect(left, top, buttonWidth, kButtonHeight);
+    const int top = kPadding + 502 + (index * (kButtonHeight + 8));
+    return MakeRect(PanelLeft() + 24, top, kPanelWidth - 48, kButtonHeight);
 }
 
 RECT TimeControlRect(int index) {
-    const int availableWidth = kPanelWidth - 48;
-    const int spacing = 12;
-    const int buttonWidth = (availableWidth - spacing) / 2;
-    if (index == 4) {
-        return MakeRect(PanelLeft() + 24, kPadding + 748, availableWidth, kTimerButtonHeight);
-    }
-
-    const int row = index / 2;
-    const int column = index % 2;
-    const int left = PanelLeft() + 24 + (column * (buttonWidth + spacing));
-    const int top = kPadding + 644 + (row * (kTimerButtonHeight + kTimerButtonGap));
-    return MakeRect(left, top, buttonWidth, kTimerButtonHeight);
+    const int top = kPadding + 742 + (index * (kTimerButtonHeight + 8));
+    return MakeRect(PanelLeft() + 24, top, kPanelWidth - 48, kTimerButtonHeight);
 }
 
 RECT StatusPanelRect() {
@@ -298,6 +267,15 @@ void BeginNextTurn(GuiState& state) {
     state.lastClockTick = GetTickCount64();
 }
 
+void StartMatch(GuiState& state) {
+    if (state.gameOver) {
+        return;
+    }
+    state.gameStarted = true;
+    state.selectedSquare = -1;
+    BeginNextTurn(state);
+}
+
 void MarkFlagLoss(GuiState& state, bool blackFlagged) {
     state.gameOver = true;
     state.gameOverMessageShown = false;
@@ -305,7 +283,7 @@ void MarkFlagLoss(GuiState& state, bool blackFlagged) {
 }
 
 bool DeductActiveClock(GuiState& state, std::int64_t elapsedMs) {
-    if (state.gameOver || elapsedMs <= 0) {
+    if (!state.gameStarted || state.gameOver || elapsedMs <= 0) {
         return false;
     }
 
@@ -321,7 +299,7 @@ bool DeductActiveClock(GuiState& state, std::int64_t elapsedMs) {
 }
 
 void SyncClock(GuiState& state) {
-    if (state.gameOver) {
+    if (!state.gameStarted || state.gameOver) {
         return;
     }
 
@@ -388,7 +366,9 @@ void RefreshGameState(GuiState& state) {
 
     state.gameOver = false;
     state.gameOverMessageShown = false;
-    if (IsRobotTurn(state)) {
+    if (!state.gameStarted) {
+        state.statusText = "Ready - press Start to begin";
+    } else if (IsRobotTurn(state)) {
         state.statusText = "Robot to move";
     } else {
         state.statusText = std::string(blackToMove ? "Black" : "White") + " to move";
@@ -401,6 +381,7 @@ void RefreshGameState(GuiState& state) {
 void StartNewGame(GuiState& state) {
     state.board.defaultBoard();
     state.selectedSquare = -1;
+    state.gameStarted = false;
     state.hasLastMove = false;
     state.gameOverMessageShown = false;
     ResetClocks(state);
@@ -408,7 +389,7 @@ void StartNewGame(GuiState& state) {
 }
 
 void QueueRobotTurnIfNeeded(const GuiState& state, HWND hwnd) {
-    if (!state.gameOver && IsRobotTurn(state)) {
+    if (state.gameStarted && !state.gameOver && IsRobotTurn(state)) {
         PostMessage(hwnd, kRobotTurnMessage, 0, 0);
     }
 }
@@ -487,6 +468,16 @@ void MaybeShowGameOverDialog(GuiState& state, HWND hwnd) {
     std::string message = state.statusText + "\n\nPress New Game or tap N to play again.";
     MessageBoxA(hwnd, message.c_str(), "Game Over", MB_OK | MB_ICONINFORMATION);
     state.gameOverMessageShown = true;
+}
+
+void SurrenderCurrentSide(GuiState& state) {
+    if (!state.gameStarted || state.gameOver) {
+        return;
+    }
+
+    state.gameOver = true;
+    state.gameOverMessageShown = false;
+    state.statusText = std::string(state.board.sideToMove ? "Black" : "White") + " surrendered";
 }
 
 void RunRobotTurn(GuiState& state, HWND hwnd) {
@@ -602,7 +593,9 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     DrawClockCard(hdc, blackPanelClock, "Black", FormatClock(state.blackTimeMs), !state.gameOver && state.board.sideToMove, labelFont, clockFont);
 
     SelectObject(hdc, buttonFont);
+    DrawButton(hdc, StartRect(), state.gameStarted ? "Started" : "Start", state.gameStarted && !state.gameOver);
     DrawButton(hdc, NewGameRect(), "New Game", false);
+    DrawButton(hdc, SurrenderRect(), "Surrender", false);
 
     std::string modeText = std::string("Mode: ") + ModeLabel(state.mode);
     DrawButton(hdc, ModeRect(), modeText.c_str(), state.mode == GameMode::HumanVsRobot);
@@ -611,32 +604,29 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     DrawButton(hdc, SideRect(), sideText.c_str(), state.humanPlaysBlack);
 
     SelectObject(hdc, labelFont);
-    RECT difficultyHeader = {panel.left + 24, panel.top + 430, panel.right - 24, panel.top + 458};
+    RECT difficultyHeader = {panel.left + 24, panel.top + 468, panel.right - 24, panel.top + 496};
     DrawTextLeftA(hdc, difficultyHeader, "Robot Difficulty", RGB(220, 226, 233));
 
     SelectObject(hdc, buttonFont);
-    DrawButton(hdc, DifficultyRect(0), "Beginner", state.difficulty == RobotDifficulty::Beginner);
-    DrawButton(hdc, DifficultyRect(1), "Easy", state.difficulty == RobotDifficulty::Easy);
-    DrawButton(hdc, DifficultyRect(2), "Medium", state.difficulty == RobotDifficulty::Medium);
-    DrawButton(hdc, DifficultyRect(3), "Hard", state.difficulty == RobotDifficulty::Hard);
+    DrawButton(hdc, DifficultyRect(0), "Easy", state.difficulty == RobotDifficulty::Easy);
+    DrawButton(hdc, DifficultyRect(1), "Medium", state.difficulty == RobotDifficulty::Medium);
+    DrawButton(hdc, DifficultyRect(2), "Hard", state.difficulty == RobotDifficulty::Hard);
+    DrawButton(hdc, DifficultyRect(3), "Grandmaster", state.difficulty == RobotDifficulty::Grandmaster);
 
     SelectObject(hdc, labelFont);
-    RECT timerHeader = {panel.left + 24, panel.top + 606, panel.right - 24, panel.top + 634};
+    RECT timerHeader = {panel.left + 24, panel.top + 708, panel.right - 24, panel.top + 736};
     DrawTextLeftA(hdc, timerHeader, "Time Control", RGB(220, 226, 233));
 
     SelectObject(hdc, buttonFont);
-    DrawButton(hdc, TimeControlRect(0), "1|0", state.timeControl == TimeControlPreset::Bullet1);
-    DrawButton(hdc, TimeControlRect(1), "3|0", state.timeControl == TimeControlPreset::Blitz3);
-    DrawButton(hdc, TimeControlRect(2), "5|0", state.timeControl == TimeControlPreset::Blitz5);
-    DrawButton(hdc, TimeControlRect(3), "10|0", state.timeControl == TimeControlPreset::Rapid10);
-    DrawButton(hdc, TimeControlRect(4), "15|0", state.timeControl == TimeControlPreset::Rapid15);
+    DrawButton(hdc, TimeControlRect(0), "1 minute", state.timeControl == TimeControlPreset::Bullet1);
+    DrawButton(hdc, TimeControlRect(1), "3 minutes", state.timeControl == TimeControlPreset::Blitz3);
+    DrawButton(hdc, TimeControlRect(2), "5 minutes", state.timeControl == TimeControlPreset::Blitz5);
+    DrawButton(hdc, TimeControlRect(3), "10 minutes", state.timeControl == TimeControlPreset::Rapid10);
+    DrawButton(hdc, TimeControlRect(4), "15 minutes", state.timeControl == TimeControlPreset::Rapid15);
 
     SelectObject(hdc, labelFont);
-    RECT footer = {panel.left + 24, panel.top + 814, panel.right - 24, panel.bottom - 24};
-    std::string footerText = std::string("Preset ") + TimeControlLabel(state.timeControl);
-    footerText += "   ";
-    footerText += DifficultyLabel(state.difficulty);
-    footerText += "\nN new game  M mode  C color  1-4 bot  Esc clear";
+    RECT footer = {panel.left + 24, panel.top + 974, panel.right - 24, panel.bottom - 24};
+    std::string footerText = "Enter start  X surrender  N new game\nM mode  C color  1-4 bot  Esc clear";
     DrawTextLeftA(hdc, footer, footerText.c_str(), RGB(176, 183, 192), DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     SelectObject(hdc, oldFont);
@@ -657,6 +647,8 @@ void DrawStatusPanel(HDC hdc, const GuiState& state, HFONT titleFont, HFONT body
     std::string infoText;
     if (state.gameOver) {
         infoText = "Game over. Start a new game to reset the board.";
+    } else if (!state.gameStarted) {
+        infoText = "Press Start to begin the match and activate the clocks.";
     } else if (IsRobotTurn(state)) {
         infoText = "Robot is moving. The active clock is highlighted on the right.";
     } else {
@@ -793,6 +785,9 @@ void DrawBoard(HDC hdc, const GuiState& state) {
 
 bool HandleKeyDown(GuiState& state, HWND hwnd, WPARAM wParam) {
     switch (wParam) {
+        case VK_RETURN:
+            StartMatch(state);
+            break;
         case 'N':
             StartNewGame(state);
             break;
@@ -805,27 +800,30 @@ bool HandleKeyDown(GuiState& state, HWND hwnd, WPARAM wParam) {
             StartNewGame(state);
             break;
         case '1':
-            state.difficulty = RobotDifficulty::Beginner;
-            RefreshGameState(state);
-            BeginNextTurn(state);
-            break;
-        case '2':
             state.difficulty = RobotDifficulty::Easy;
             RefreshGameState(state);
             BeginNextTurn(state);
             break;
-        case '3':
+        case '2':
             state.difficulty = RobotDifficulty::Medium;
             RefreshGameState(state);
             BeginNextTurn(state);
             break;
-        case '4':
+        case '3':
             state.difficulty = RobotDifficulty::Hard;
+            RefreshGameState(state);
+            BeginNextTurn(state);
+            break;
+        case '4':
+            state.difficulty = RobotDifficulty::Grandmaster;
             RefreshGameState(state);
             BeginNextTurn(state);
             break;
         case VK_ESCAPE:
             state.selectedSquare = -1;
+            break;
+        case 'X':
+            SurrenderCurrentSide(state);
             break;
         default:
             return false;
@@ -837,6 +835,8 @@ bool HandleKeyDown(GuiState& state, HWND hwnd, WPARAM wParam) {
 }
 
 bool HandleControlClick(GuiState& state, HWND hwnd, const POINT& point) {
+    const RECT startRect = StartRect();
+    const RECT surrenderRect = SurrenderRect();
     const RECT newGameRect = NewGameRect();
     const RECT modeRect = ModeRect();
     const RECT sideRect = SideRect();
@@ -850,7 +850,11 @@ bool HandleControlClick(GuiState& state, HWND hwnd, const POINT& point) {
     const RECT timeRect3 = TimeControlRect(3);
     const RECT timeRect4 = TimeControlRect(4);
 
-    if (PtInRect(&newGameRect, point)) {
+    if (PtInRect(&startRect, point)) {
+        StartMatch(state);
+    } else if (PtInRect(&surrenderRect, point)) {
+        SurrenderCurrentSide(state);
+    } else if (PtInRect(&newGameRect, point)) {
         StartNewGame(state);
     } else if (PtInRect(&modeRect, point)) {
         state.mode = state.mode == GameMode::HumanVsRobot ? GameMode::HumanVsHuman : GameMode::HumanVsRobot;
@@ -859,19 +863,19 @@ bool HandleControlClick(GuiState& state, HWND hwnd, const POINT& point) {
         state.humanPlaysBlack = !state.humanPlaysBlack;
         StartNewGame(state);
     } else if (PtInRect(&beginnerRect, point)) {
-        state.difficulty = RobotDifficulty::Beginner;
-        RefreshGameState(state);
-        BeginNextTurn(state);
-    } else if (PtInRect(&easyRect, point)) {
         state.difficulty = RobotDifficulty::Easy;
         RefreshGameState(state);
         BeginNextTurn(state);
-    } else if (PtInRect(&mediumRect, point)) {
+    } else if (PtInRect(&easyRect, point)) {
         state.difficulty = RobotDifficulty::Medium;
         RefreshGameState(state);
         BeginNextTurn(state);
-    } else if (PtInRect(&hardRect, point)) {
+    } else if (PtInRect(&mediumRect, point)) {
         state.difficulty = RobotDifficulty::Hard;
+        RefreshGameState(state);
+        BeginNextTurn(state);
+    } else if (PtInRect(&hardRect, point)) {
+        state.difficulty = RobotDifficulty::Grandmaster;
         RefreshGameState(state);
         BeginNextTurn(state);
     } else if (PtInRect(&timeRect0, point)) {
@@ -895,6 +899,7 @@ bool HandleControlClick(GuiState& state, HWND hwnd, const POINT& point) {
 
     state.selectedSquare = -1;
     InvalidateRect(hwnd, nullptr, FALSE);
+    MaybeShowGameOverDialog(state, hwnd);
     QueueRobotTurnIfNeeded(state, hwnd);
     return true;
 }
@@ -954,7 +959,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            if (IsRobotTurn(*state)) {
+            if (!state->gameStarted || IsRobotTurn(*state)) {
                 return 0;
             }
 
