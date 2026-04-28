@@ -14,19 +14,17 @@
 #include <string>
 
 namespace {
-constexpr int kBoardPixels = 896;
+constexpr int kBoardPixels = 800;
 constexpr int kCellPixels = kBoardPixels / 8;
 constexpr int kPadding = 32;
 constexpr int kPanelWidth = 336;
-constexpr int kStatusHeight = 96;
+constexpr int kStatusHeight = 84;
 constexpr int kPanelHeight = kBoardPixels + kStatusHeight + 16;
 constexpr int kWindowWidth = kBoardPixels + kPanelWidth + (kPadding * 3);
 constexpr int kWindowHeight = kBoardPixels + kStatusHeight + (kPadding * 2);
 constexpr int kBoardBorder = 10;
-constexpr int kButtonHeight = 46;
-constexpr int kButtonGap = 12;
-constexpr int kTimerButtonHeight = 42;
-constexpr int kTimerButtonGap = 12;
+constexpr int kButtonHeight = 38;
+constexpr int kTimerButtonHeight = 34;
 constexpr UINT kRobotTurnMessage = WM_APP + 1;
 constexpr UINT_PTR kClockTimerId = 1;
 constexpr UINT kClockTickMs = 100;
@@ -148,35 +146,35 @@ RECT NewGameRect() {
     const int availableWidth = kPanelWidth - 48;
     const int spacing = 12;
     const int buttonWidth = (availableWidth - spacing) / 2;
-    return MakeRect(PanelLeft() + 24, kPadding + 294, buttonWidth, kButtonHeight);
+    return MakeRect(PanelLeft() + 24, kPadding + 252, buttonWidth, kButtonHeight);
 }
 
 RECT StartRect() {
-    return MakeRect(PanelLeft() + 24, kPadding + 236, kPanelWidth - 48, kButtonHeight);
+    return MakeRect(PanelLeft() + 24, kPadding + 206, kPanelWidth - 48, kButtonHeight);
 }
 
 RECT SurrenderRect() {
     const int availableWidth = kPanelWidth - 48;
     const int spacing = 12;
     const int buttonWidth = (availableWidth - spacing) / 2;
-    return MakeRect(PanelLeft() + 24 + buttonWidth + spacing, kPadding + 294, buttonWidth, kButtonHeight);
+    return MakeRect(PanelLeft() + 24 + buttonWidth + spacing, kPadding + 252, buttonWidth, kButtonHeight);
 }
 
 RECT ModeRect() {
-    return MakeRect(PanelLeft() + 24, kPadding + 352, kPanelWidth - 48, kButtonHeight);
+    return MakeRect(PanelLeft() + 24, kPadding + 298, kPanelWidth - 48, kButtonHeight);
 }
 
 RECT SideRect() {
-    return MakeRect(PanelLeft() + 24, kPadding + 410, kPanelWidth - 48, kButtonHeight);
+    return MakeRect(PanelLeft() + 24, kPadding + 344, kPanelWidth - 48, kButtonHeight);
 }
 
 RECT DifficultyRect(int index) {
-    const int top = kPadding + 502 + (index * (kButtonHeight + 8));
+    const int top = kPadding + 428 + (index * (kButtonHeight + 7));
     return MakeRect(PanelLeft() + 24, top, kPanelWidth - 48, kButtonHeight);
 }
 
 RECT TimeControlRect(int index) {
-    const int top = kPadding + 742 + (index * (kTimerButtonHeight + 8));
+    const int top = kPadding + 634 + (index * (kTimerButtonHeight + 6));
     return MakeRect(PanelLeft() + 24, top, kPanelWidth - 48, kTimerButtonHeight);
 }
 
@@ -465,9 +463,9 @@ void MaybeShowGameOverDialog(GuiState& state, HWND hwnd) {
         return;
     }
 
+    state.gameOverMessageShown = true;
     std::string message = state.statusText + "\n\nPress New Game or tap N to play again.";
     MessageBoxA(hwnd, message.c_str(), "Game Over", MB_OK | MB_ICONINFORMATION);
-    state.gameOverMessageShown = true;
 }
 
 void SurrenderCurrentSide(GuiState& state) {
@@ -580,15 +578,15 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, titleFont));
     SetBkMode(hdc, TRANSPARENT);
 
-    RECT header = {panel.left + 24, panel.top + 24, panel.right - 24, panel.top + 60};
+    RECT header = {panel.left + 24, panel.top + 20, panel.right - 24, panel.top + 50};
     DrawTextLeftA(hdc, header, "CPSC362 Chess", RGB(242, 236, 225));
 
     SelectObject(hdc, labelFont);
-    RECT subHeader = {panel.left + 24, panel.top + 58, panel.right - 24, panel.top + 84};
+    RECT subHeader = {panel.left + 24, panel.top + 52, panel.right - 24, panel.top + 76};
     DrawTextLeftA(hdc, subHeader, "Robot mode with chess clocks", RGB(172, 178, 189));
 
-    RECT whitePanelClock = {panel.left + 24, panel.top + 96, panel.right - 24, panel.top + 154};
-    RECT blackPanelClock = {panel.left + 24, panel.top + 164, panel.right - 24, panel.top + 222};
+    RECT whitePanelClock = {panel.left + 24, panel.top + 86, panel.right - 24, panel.top + 136};
+    RECT blackPanelClock = {panel.left + 24, panel.top + 144, panel.right - 24, panel.top + 194};
     DrawClockCard(hdc, whitePanelClock, "White", FormatClock(state.whiteTimeMs), !state.gameOver && !state.board.sideToMove, labelFont, clockFont);
     DrawClockCard(hdc, blackPanelClock, "Black", FormatClock(state.blackTimeMs), !state.gameOver && state.board.sideToMove, labelFont, clockFont);
 
@@ -604,7 +602,7 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     DrawButton(hdc, SideRect(), sideText.c_str(), state.humanPlaysBlack);
 
     SelectObject(hdc, labelFont);
-    RECT difficultyHeader = {panel.left + 24, panel.top + 468, panel.right - 24, panel.top + 496};
+    RECT difficultyHeader = {panel.left + 24, panel.top + 398, panel.right - 24, panel.top + 424};
     DrawTextLeftA(hdc, difficultyHeader, "Robot Difficulty", RGB(220, 226, 233));
 
     SelectObject(hdc, buttonFont);
@@ -614,7 +612,7 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     DrawButton(hdc, DifficultyRect(3), "Grandmaster", state.difficulty == RobotDifficulty::Grandmaster);
 
     SelectObject(hdc, labelFont);
-    RECT timerHeader = {panel.left + 24, panel.top + 708, panel.right - 24, panel.top + 736};
+    RECT timerHeader = {panel.left + 24, panel.top + 610, panel.right - 24, panel.top + 632};
     DrawTextLeftA(hdc, timerHeader, "Time Control", RGB(220, 226, 233));
 
     SelectObject(hdc, buttonFont);
@@ -625,7 +623,7 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     DrawButton(hdc, TimeControlRect(4), "15 minutes", state.timeControl == TimeControlPreset::Rapid15);
 
     SelectObject(hdc, labelFont);
-    RECT footer = {panel.left + 24, panel.top + 974, panel.right - 24, panel.bottom - 24};
+    RECT footer = {panel.left + 24, panel.top + 846, panel.right - 24, panel.bottom - 18};
     std::string footerText = "Enter start  X surrender  N new game\nM mode  C color  1-4 bot  Esc clear";
     DrawTextLeftA(hdc, footer, footerText.c_str(), RGB(176, 183, 192), DT_LEFT | DT_TOP | DT_WORDBREAK);
 
@@ -675,22 +673,22 @@ void DrawBoard(HDC hdc, const GuiState& state) {
     DrawRoundPanel(hdc, outerBoard, RGB(46, 35, 24), RGB(128, 97, 66));
 
     HFONT pieceFont = CreateFontW(
-        76, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_OUTLINE_PRECIS,
+        68, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_OUTLINE_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Segoe UI Symbol");
     HFONT titleFont = CreateFontA(
-        26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+        24, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Bahnschrift");
     HFONT labelFont = CreateFontA(
-        20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+        18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Segoe UI");
     HFONT buttonFont = CreateFontA(
-        20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+        18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Bahnschrift");
     HFONT coordFont = CreateFontA(
-        18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+        16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Segoe UI");
     HFONT clockFont = CreateFontA(
-        28, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+        24, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Bahnschrift");
 
     SetBkMode(hdc, TRANSPARENT);
