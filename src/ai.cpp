@@ -14,6 +14,28 @@ constexpr std::array<int, 12> kPieceValues = {
     100, 320, 330, 500, 900, 0
 };
 
+struct DifficultyProfile {
+    int searchDepth;
+    int candidateLimit;
+    int maxScoreDrop;
+    int randomMovePercent;
+    int evaluationNoise;
+};
+
+DifficultyProfile ProfileForDifficulty(RobotDifficulty difficulty) {
+    switch (difficulty) {
+        case RobotDifficulty::Easy:
+            return {1, 10, 1200, 22, 220};
+        case RobotDifficulty::Medium:
+            return {2, 6, 520, 8, 90};
+        case RobotDifficulty::Hard:
+            return {3, 3, 190, 0, 25};
+        case RobotDifficulty::Grandmaster:
+            return {5, 1, 0, 0, 0};
+    }
+    return {2, 6, 520, 8, 90};
+}
+
 int MirrorRank(int rank) {
     return 7 - rank;
 }
@@ -57,7 +79,14 @@ bool ChessAi::findMove(const Board& board, const MoveGen& moveGen, RobotDifficul
         return false;
     }
 
-    const int depth = depthForDifficulty(difficulty);
+    const DifficultyProfile profile = ProfileForDifficulty(difficulty);
+    std::uniform_int_distribution<int> percentRoll(1, 100);
+    if (profile.randomMovePercent > 0 && percentRoll(random_) <= profile.randomMovePercent) {
+        std::uniform_int_distribution<int> randomMove(0, moves.count - 1);
+        outMove = moves.moves[randomMove(random_)];
+        return true;
+    }
+
     struct RootMove {
         Move move;
         int score = std::numeric_limits<int>::min();
@@ -72,7 +101,11 @@ bool ChessAi::findMove(const Board& board, const MoveGen& moveGen, RobotDifficul
             continue;
         }
 
-        const int score = -negamax(next, moveGen, depth - 1, -kInfinity, kInfinity).score;
+        int score = -negamax(next, moveGen, profile.searchDepth - 1, -kInfinity, kInfinity).score;
+        if (profile.evaluationNoise > 0) {
+            std::uniform_int_distribution<int> noise(-profile.evaluationNoise, profile.evaluationNoise);
+            score += noise(random_);
+        }
         scoredMoves.push_back({moves.moves[i], score});
     }
 
@@ -84,16 +117,15 @@ bool ChessAi::findMove(const Board& board, const MoveGen& moveGen, RobotDifficul
         return left.score > right.score;
     });
 
-    const int requestedCandidates = candidateCountForDifficulty(difficulty);
     const int bestScore = scoredMoves.front().score;
     std::vector<Move> shortlist;
-    shortlist.reserve(requestedCandidates);
+    shortlist.reserve(profile.candidateLimit);
 
     for (const RootMove& candidate : scoredMoves) {
-        if (static_cast<int>(shortlist.size()) >= requestedCandidates) {
+        if (static_cast<int>(shortlist.size()) >= profile.candidateLimit) {
             break;
         }
-        if (!shortlist.empty() && (bestScore - candidate.score) > 140) {
+        if (!shortlist.empty() && (bestScore - candidate.score) > profile.maxScoreDrop) {
             break;
         }
         shortlist.push_back(candidate.move);
@@ -147,32 +179,6 @@ int ChessAi::scoreMove(const Board& board, const Move& move) const {
         score += 50;
     }
     return score;
-}
-
-int ChessAi::depthForDifficulty(RobotDifficulty difficulty) const {
-    switch (difficulty) {
-        case RobotDifficulty::Easy:
-            return 2;
-        case RobotDifficulty::Medium:
-            return 3;
-        case RobotDifficulty::Hard:
-            return 4;
-        case RobotDifficulty::Grandmaster:
-            return 5;
-    }
-    return 2;
-}
-
-int ChessAi::candidateCountForDifficulty(RobotDifficulty difficulty) const {
-    switch (difficulty) {
-        case RobotDifficulty::Easy:
-            return 2;
-        case RobotDifficulty::Medium:
-        case RobotDifficulty::Hard:
-        case RobotDifficulty::Grandmaster:
-            return 1;
-    }
-    return 1;
 }
 
 ChessAi::SearchResult ChessAi::negamax(const Board& board, const MoveGen& moveGen, int depth, int alpha, int beta) const {
