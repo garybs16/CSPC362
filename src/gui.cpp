@@ -33,6 +33,8 @@ constexpr int kTimerButtonHeight = 34;
 constexpr UINT kRobotTurnMessage = WM_APP + 1;
 constexpr UINT_PTR kClockTimerId = 1;
 constexpr UINT kClockTickMs = 100;
+constexpr int kReviewSearchDepth = 2;
+constexpr int kReviewInfinity = 1'000'000;
 
 enum class GameMode {
     HumanVsHuman,
@@ -51,9 +53,12 @@ struct ReviewMoveInfo {
     int beforeEvalWhite = 0;
     int afterEvalWhite = 0;
     int centipawnLoss = 0;
+    int bestScoreForMover = 0;
+    int playedScoreForMover = 0;
     Move playedMove;
     Move bestMove;
     std::string label;
+    std::string note;
     bool isBestMove = false;
 };
 
@@ -193,6 +198,11 @@ int StaticEvalWhite(const Board& board) {
     return score;
 }
 
+int StaticEvalForSideToMove(const Board& board) {
+    const int whiteScore = StaticEvalWhite(board);
+    return board.sideToMove ? -whiteScore : whiteScore;
+}
+
 int EvalWhiteWithTerminal(const Board& board, const MoveGen& moveGen) {
     MoveList moves;
     moveGen.generateAll(board, moves);
@@ -206,9 +216,78 @@ int EvalWhiteWithTerminal(const Board& board, const MoveGen& moveGen) {
     return StaticEvalWhite(board);
 }
 
-int ScoreForMoverAfterMove(const Board& boardAfterMove, const MoveGen& moveGen, bool moverBlack) {
-    const int whiteScore = EvalWhiteWithTerminal(boardAfterMove, moveGen);
-    return moverBlack ? -whiteScore : whiteScore;
+int PieceValue(int pieceId) {
+    static constexpr std::array<int, 12> kPieceValues = {
+        100, 320, 330, 500, 900, 0,
+        100, 320, 330, 500, 900, 0
+    };
+
+    if (pieceId < 0 || pieceId >= static_cast<int>(kPieceValues.size())) {
+        return 0;
+    }
+    return kPieceValues[static_cast<std::size_t>(pieceId)];
+}
+
+int ReviewMoveOrderingScore(const Board& board, const Move& move) {
+    int score = 0;
+    const int movingPiece = board.getPieceAt(move.getFrom());
+    int capturedPiece = board.getPieceAt(move.getTo());
+    if (move.getFlags() == EnPassant) {
+        capturedPiece = board.sideToMove ? P : bP;
+    }
+
+    if (capturedPiece != -1) {
+        score += (PieceValue(capturedPiece) * 10) - PieceValue(movingPiece);
+    }
+    if (move.isPromotion()) {
+        score += 800;
+    }
+    if (move.isCastle()) {
+        score += 50;
+    }
+    return score;
+}
+
+int ReviewNegamax(const Board& board, const MoveGen& moveGen, int depth, int alpha, int beta) {
+    MoveList moves;
+    moveGen.generateAll(board, moves);
+
+    if (moves.count == 0) {
+        if (moveGen.isInCheck(board, board.sideToMove)) {
+            return -100000 - depth;
+        }
+        return 0;
+    }
+
+    if (depth == 0) {
+        return StaticEvalForSideToMove(board);
+    }
+
+    std::vector<Move> orderedMoves(moves.moves, moves.moves + moves.count);
+    std::sort(orderedMoves.begin(), orderedMoves.end(), [&](const Move& left, const Move& right) {
+        return ReviewMoveOrderingScore(board, left) > ReviewMoveOrderingScore(board, right);
+    });
+
+    int bestScore = -kReviewInfinity;
+    for (const Move& move : orderedMoves) {
+        Board next(board);
+        if (!next.makeMove(move)) {
+            continue;
+        }
+
+        const int score = -ReviewNegamax(next, moveGen, depth - 1, -beta, -alpha);
+        bestScore = std::max(bestScore, score);
+        alpha = std::max(alpha, score);
+        if (alpha >= beta) {
+            break;
+        }
+    }
+
+    return bestScore;
+}
+
+int ReviewScoreForMoverAfterMove(const Board& boardAfterMove, const MoveGen& moveGen) {
+    return -ReviewNegamax(boardAfterMove, moveGen, kReviewSearchDepth, -kReviewInfinity, kReviewInfinity);
 }
 
 std::string SquareName(int square) {
@@ -270,20 +349,40 @@ std::string FormatEval(int centipawns) {
     return std::string(buffer);
 }
 
-std::string ClassificationForLoss(int loss, bool bestMove) {
-    if (bestMove || loss <= 10) {
+std::string FormatMoverScore(int centipawns) {
+    if (centipawns >= 90000) {
+        return "mate";
+    }
+    if (centipawns <= -90000) {
+        return "getting mated";
+    }
+
+    char buffer[32];
+    const double pawns = static_cast<double>(centipawns) / 100.0;
+    std::snprintf(buffer, sizeof(buffer), "%+.1f", pawns);
+    return std::string(buffer);
+}
+
+std::string ClassificationForLoss(int loss, bool bestMove, int bestScore, int playedScore) {
+    if (bestScore >= 300 && playedScore < 80 && loss >= 260 && loss < 520) {
+        return "Missed Win";
+    }
+    if (bestMove || loss <= 12) {
         return "Best";
     }
-    if (loss <= 35) {
+    if (loss <= 30) {
         return "Excellent";
     }
-    if (loss <= 80) {
+    if (loss <= 70) {
         return "Good";
     }
-    if (loss <= 160) {
+    if (loss <= 120) {
+        return "Neutral";
+    }
+    if (loss <= 220) {
         return "Inaccuracy";
     }
-    if (loss <= 320) {
+    if (loss <= 450) {
         return "Mistake";
     }
     return "Blunder";
@@ -299,13 +398,69 @@ COLORREF ClassificationColor(const std::string& label) {
     if (label == "Good") {
         return RGB(166, 195, 116);
     }
+    if (label == "Neutral") {
+        return RGB(156, 170, 180);
+    }
     if (label == "Inaccuracy") {
         return RGB(220, 180, 104);
     }
     if (label == "Mistake") {
         return RGB(205, 135, 92);
     }
+    if (label == "Missed Win") {
+        return RGB(224, 150, 82);
+    }
     return RGB(205, 104, 100);
+}
+
+int QualityScore(const std::string& label) {
+    if (label == "Best") {
+        return 100;
+    }
+    if (label == "Excellent") {
+        return 96;
+    }
+    if (label == "Good") {
+        return 90;
+    }
+    if (label == "Neutral") {
+        return 82;
+    }
+    if (label == "Inaccuracy") {
+        return 68;
+    }
+    if (label == "Missed Win") {
+        return 45;
+    }
+    if (label == "Mistake") {
+        return 42;
+    }
+    return 15;
+}
+
+std::string ReviewNoteForLabel(const std::string& label) {
+    if (label == "Best") {
+        return "Top engine choice.";
+    }
+    if (label == "Excellent") {
+        return "Nearly best.";
+    }
+    if (label == "Good") {
+        return "Keeps control.";
+    }
+    if (label == "Neutral") {
+        return "Small eval drop.";
+    }
+    if (label == "Inaccuracy") {
+        return "Noticeable drop.";
+    }
+    if (label == "Missed Win") {
+        return "Winning chance missed.";
+    }
+    if (label == "Mistake") {
+        return "Large eval drop.";
+    }
+    return "Major swing; check tactics.";
 }
 
 RECT MakeRect(int left, int top, int width, int height) {
@@ -574,7 +729,6 @@ ReviewMoveInfo AnalyzeReviewMove(const Board& before, const Move& playedMove, co
 
     MoveList moves;
     moveGen.generateAll(before, moves);
-    const bool moverBlack = before.sideToMove;
     int bestScore = std::numeric_limits<int>::min();
     bool foundBest = false;
 
@@ -584,7 +738,7 @@ ReviewMoveInfo AnalyzeReviewMove(const Board& before, const Move& playedMove, co
             continue;
         }
 
-        const int score = ScoreForMoverAfterMove(candidate, moveGen, moverBlack);
+        const int score = ReviewScoreForMoverAfterMove(candidate, moveGen);
         if (!foundBest || score > bestScore) {
             foundBest = true;
             bestScore = score;
@@ -597,14 +751,22 @@ ReviewMoveInfo AnalyzeReviewMove(const Board& before, const Move& playedMove, co
         info.afterEvalWhite = info.beforeEvalWhite;
         info.centipawnLoss = 0;
         info.label = "Review";
+        info.note = "Move could not be replayed.";
         return info;
     }
 
     info.afterEvalWhite = EvalWhiteWithTerminal(after, moveGen);
-    const int actualScore = ScoreForMoverAfterMove(after, moveGen, moverBlack);
+    const int actualScore = ReviewScoreForMoverAfterMove(after, moveGen);
+    info.bestScoreForMover = foundBest ? bestScore : actualScore;
+    info.playedScoreForMover = actualScore;
     info.isBestMove = foundBest && SameMove(playedMove, info.bestMove);
     info.centipawnLoss = foundBest ? std::max(0, bestScore - actualScore) : 0;
-    info.label = ClassificationForLoss(info.centipawnLoss, info.isBestMove);
+    info.label = ClassificationForLoss(
+        info.centipawnLoss,
+        info.isBestMove,
+        info.bestScoreForMover,
+        info.playedScoreForMover);
+    info.note = ReviewNoteForLabel(info.label);
     return info;
 }
 
@@ -931,13 +1093,12 @@ int ReviewAccuracy(const GuiState& state) {
         return 100;
     }
 
-    int totalLoss = 0;
+    int totalScore = 0;
     for (const ReviewMoveInfo& info : state.reviewMoves) {
-        totalLoss += std::min(info.centipawnLoss, 600);
+        totalScore += QualityScore(info.label);
     }
 
-    const int averageLoss = totalLoss / static_cast<int>(state.reviewMoves.size());
-    return std::max(0, std::min(100, 100 - (averageLoss / 6)));
+    return std::max(0, std::min(100, totalScore / static_cast<int>(state.reviewMoves.size())));
 }
 
 int CountReviewLabel(const GuiState& state, const char* label) {
@@ -963,7 +1124,7 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
     RECT reviewTitle = {panel.left + 24, panel.top + 354, panel.right - 24, panel.top + 380};
     DrawTextLeftA(hdc, reviewTitle, "Game Review", RGB(218, 225, 228));
 
-    RECT scoreCard = {panel.left + 24, panel.top + 386, panel.right - 24, panel.top + 476};
+    RECT scoreCard = {panel.left + 24, panel.top + 386, panel.right - 24, panel.top + 506};
     DrawRoundPanel(hdc, scoreCard, RGB(31, 37, 44), RGB(68, 80, 91));
 
     SelectObject(hdc, clockFont);
@@ -980,14 +1141,19 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
     std::snprintf(
         summaryText,
         sizeof(summaryText),
-        "Best %d    Mistakes %d\nBlunders %d",
+        "Best %d  Excel %d  Good %d\nNeutral %d  Inacc %d\nMistake %d  Blunder %d  Missed %d",
         CountReviewLabel(state, "Best"),
+        CountReviewLabel(state, "Excellent"),
+        CountReviewLabel(state, "Good"),
+        CountReviewLabel(state, "Neutral"),
+        CountReviewLabel(state, "Inaccuracy"),
         CountReviewLabel(state, "Mistake"),
-        CountReviewLabel(state, "Blunder"));
+        CountReviewLabel(state, "Blunder"),
+        CountReviewLabel(state, "Missed Win"));
     RECT summaryRect = {scoreCard.left + 98, scoreCard.top + 42, scoreCard.right - 14, scoreCard.bottom - 12};
     DrawTextLeftA(hdc, summaryRect, summaryText, RGB(170, 182, 190), DT_LEFT | DT_TOP | DT_WORDBREAK);
 
-    RECT moveCard = {panel.left + 24, panel.top + 492, panel.right - 24, panel.top + 632};
+    RECT moveCard = {panel.left + 24, panel.top + 520, panel.right - 24, panel.top + 640};
     DrawRoundPanel(hdc, moveCard, RGB(31, 37, 44), RGB(68, 80, 91));
 
     SelectObject(hdc, labelFont);
@@ -1003,13 +1169,16 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
         std::snprintf(
             detailText,
             sizeof(detailText),
-            "Move %d of %d: %s\nBest move: %s\nEval after move: %s\nLoss: %d cp",
+            "Move %d/%d: %s\nBest: %s (%s)\nPlayed: %s  Loss: %d cp\nEval: %s  %s",
             currentPly,
             totalPly,
             MoveText(info.playedMove).c_str(),
             MoveText(info.bestMove).c_str(),
+            FormatMoverScore(info.bestScoreForMover).c_str(),
+            FormatMoverScore(info.playedScoreForMover).c_str(),
+            info.centipawnLoss,
             FormatEval(info.afterEvalWhite).c_str(),
-            info.centipawnLoss);
+            info.note.c_str());
         RECT details = {moveCard.left + 16, moveCard.top + 44, moveCard.right - 16, moveCard.bottom - 14};
         DrawTextLeftA(hdc, details, detailText, RGB(190, 201, 208), DT_LEFT | DT_TOP | DT_WORDBREAK);
     }
