@@ -1,3 +1,6 @@
 src/*.o
 src/*.exe
 src/engine
+src/engines/*.exe
+src/engines/*.zip
+src/engines/stockfish_extract/

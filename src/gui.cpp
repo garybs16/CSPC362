@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -33,8 +34,11 @@ constexpr int kTimerButtonHeight = 34;
 constexpr UINT kRobotTurnMessage = WM_APP + 1;
 constexpr UINT_PTR kClockTimerId = 1;
 constexpr UINT kClockTickMs = 100;
-constexpr int kReviewSearchDepth = 2;
+constexpr int kReviewSearchDepth = 3;
+constexpr int kReviewQuiescenceDepth = 4;
 constexpr int kReviewInfinity = 1'000'000;
+constexpr int kReviewMateScore = 100'000;
+constexpr int kStockfishReviewDepth = 12;
 
 enum class GameMode {
     HumanVsHuman,
@@ -248,26 +252,85 @@ int ReviewMoveOrderingScore(const Board& board, const Move& move) {
     return score;
 }
 
-int ReviewNegamax(const Board& board, const MoveGen& moveGen, int depth, int alpha, int beta) {
+std::vector<Move> OrderedReviewMoves(const Board& board, const MoveGen& moveGen, bool tacticalOnly) {
     MoveList moves;
     moveGen.generateAll(board, moves);
 
-    if (moves.count == 0) {
-        if (moveGen.isInCheck(board, board.sideToMove)) {
-            return -100000 - depth;
+    std::vector<Move> orderedMoves;
+    orderedMoves.reserve(moves.count);
+    for (int i = 0; i < moves.count; ++i) {
+        const Move& move = moves.moves[i];
+        if (tacticalOnly && !move.isCapture() && !move.isPromotion()) {
+            continue;
         }
-        return 0;
+        orderedMoves.push_back(move);
     }
 
-    if (depth == 0) {
-        return StaticEvalForSideToMove(board);
-    }
-
-    std::vector<Move> orderedMoves(moves.moves, moves.moves + moves.count);
     std::sort(orderedMoves.begin(), orderedMoves.end(), [&](const Move& left, const Move& right) {
         return ReviewMoveOrderingScore(board, left) > ReviewMoveOrderingScore(board, right);
     });
+    return orderedMoves;
+}
 
+int ReviewTerminalScore(const Board& board, const MoveGen& moveGen, int depth) {
+    MoveList moves;
+    moveGen.generateAll(board, moves);
+    if (moves.count > 0) {
+        return kReviewInfinity;
+    }
+
+    if (moveGen.isInCheck(board, board.sideToMove)) {
+        return -kReviewMateScore - depth;
+    }
+    return 0;
+}
+
+int ReviewQuiescence(const Board& board, const MoveGen& moveGen, int depth, int alpha, int beta) {
+    const int terminalScore = ReviewTerminalScore(board, moveGen, depth);
+    if (terminalScore != kReviewInfinity) {
+        return terminalScore;
+    }
+
+    const bool inCheck = moveGen.isInCheck(board, board.sideToMove);
+    const int standPat = StaticEvalForSideToMove(board);
+    if (depth == 0) {
+        return standPat;
+    }
+    if (!inCheck) {
+        if (standPat >= beta) {
+            return beta;
+        }
+        alpha = std::max(alpha, standPat);
+    }
+
+    std::vector<Move> orderedMoves = OrderedReviewMoves(board, moveGen, !inCheck);
+    for (const Move& move : orderedMoves) {
+        Board next(board);
+        if (!next.makeMove(move)) {
+            continue;
+        }
+
+        const int score = -ReviewQuiescence(next, moveGen, depth - 1, -beta, -alpha);
+        if (score >= beta) {
+            return beta;
+        }
+        alpha = std::max(alpha, score);
+    }
+
+    return alpha;
+}
+
+int ReviewNegamax(const Board& board, const MoveGen& moveGen, int depth, int alpha, int beta) {
+    const int terminalScore = ReviewTerminalScore(board, moveGen, depth);
+    if (terminalScore != kReviewInfinity) {
+        return terminalScore;
+    }
+
+    if (depth == 0) {
+        return ReviewQuiescence(board, moveGen, kReviewQuiescenceDepth, alpha, beta);
+    }
+
+    std::vector<Move> orderedMoves = OrderedReviewMoves(board, moveGen, false);
     int bestScore = -kReviewInfinity;
     for (const Move& move : orderedMoves) {
         Board next(board);
@@ -329,6 +392,112 @@ std::string MoveText(const Move& move) {
     return text;
 }
 
+int SquareFromUci(const std::string& square) {
+    if (square.size() < 2 || square[0] < 'a' || square[0] > 'h' || square[1] < '1' || square[1] > '8') {
+        return -1;
+    }
+    return (square[1] - '1') * 8 + (square[0] - 'a');
+}
+
+int PromotionFlagFromUci(char promotion, bool capture) {
+    switch (promotion) {
+        case 'n':
+            return capture ? CapturePromotionKnight : PromotionKnight;
+        case 'b':
+            return capture ? CapturePromotionBishop : PromotionBishop;
+        case 'r':
+            return capture ? CapturePromotionRook : PromotionRook;
+        case 'q':
+            return capture ? CapturePromotionQueen : PromotionQueen;
+        default:
+            return -1;
+    }
+}
+
+Move MoveFromUci(const Board& board, const MoveGen& moveGen, const std::string& uciMove) {
+    if (uciMove.size() < 4) {
+        return Move();
+    }
+
+    const int from = SquareFromUci(uciMove.substr(0, 2));
+    const int to = SquareFromUci(uciMove.substr(2, 2));
+    if (from == -1 || to == -1) {
+        return Move();
+    }
+
+    MoveList legalMoves;
+    moveGen.generateAll(board, legalMoves);
+    if (uciMove.size() >= 5) {
+        const bool capture = board.isSidePiece(to, !board.sideToMove);
+        const int promotionFlag = PromotionFlagFromUci(uciMove[4], capture);
+        if (promotionFlag != -1) {
+            const Move* promotionMove = legalMoves.find(from, to, promotionFlag);
+            if (promotionMove) {
+                return *promotionMove;
+            }
+        }
+    }
+
+    const Move* move = legalMoves.find(from, to);
+    return move ? *move : Move();
+}
+
+char PieceFenChar(int pieceId) {
+    static constexpr char kPieceChars[12] = {
+        'P', 'N', 'B', 'R', 'Q', 'K',
+        'p', 'n', 'b', 'r', 'q', 'k'
+    };
+    if (pieceId < 0 || pieceId >= 12) {
+        return '\0';
+    }
+    return kPieceChars[pieceId];
+}
+
+std::string BoardToFen(const Board& board) {
+    std::string fen;
+    for (int rank = 7; rank >= 0; --rank) {
+        int emptyCount = 0;
+        for (int file = 0; file < 8; ++file) {
+            const int piece = board.getPieceAt((rank * 8) + file);
+            if (piece == -1) {
+                ++emptyCount;
+                continue;
+            }
+            if (emptyCount > 0) {
+                fen += static_cast<char>('0' + emptyCount);
+                emptyCount = 0;
+            }
+            fen += PieceFenChar(piece);
+        }
+        if (emptyCount > 0) {
+            fen += static_cast<char>('0' + emptyCount);
+        }
+        if (rank > 0) {
+            fen += '/';
+        }
+    }
+
+    fen += board.sideToMove ? " b " : " w ";
+    std::string castling;
+    if (board.castling & WhiteKingSide) {
+        castling += 'K';
+    }
+    if (board.castling & WhiteQueenSide) {
+        castling += 'Q';
+    }
+    if (board.castling & BlackKingSide) {
+        castling += 'k';
+    }
+    if (board.castling & BlackQueenSide) {
+        castling += 'q';
+    }
+    fen += castling.empty() ? "-" : castling;
+    fen += ' ';
+    fen += board.enPassant == -1 ? "-" : SquareName(board.enPassant);
+    fen += " 0 1";
+    return fen;
+}
+
 bool SameMove(const Move& left, const Move& right) {
     return left.getFrom() == right.getFrom()
         && left.getTo() == right.getTo()
@@ -364,6 +533,9 @@ std::string FormatMoverScore(int centipawns) {
 }
 
 std::string ClassificationForLoss(int loss, bool bestMove, int bestScore, int playedScore) {
+    if (bestScore >= 90000 && playedScore < 90000) {
+        return "Missed Mate";
+    }
     if (bestScore >= 300 && playedScore < 80 && loss >= 260 && loss < 520) {
         return "Missed Win";
     }
@@ -410,6 +582,9 @@ COLORREF ClassificationColor(const std::string& label) {
     if (label == "Missed Win") {
         return RGB(224, 150, 82);
     }
+    if (label == "Missed Mate") {
+        return RGB(226, 116, 94);
+    }
     return RGB(205, 104, 100);
 }
 
@@ -431,6 +606,9 @@ int QualityScore(const std::string& label) {
     }
     if (label == "Missed Win") {
         return 45;
+    }
+    if (label == "Missed Mate") {
+        return 25;
     }
     if (label == "Mistake") {
         return 42;
@@ -457,11 +635,285 @@ std::string ReviewNoteForLabel(const std::string& label) {
     if (label == "Missed Win") {
         return "Winning chance missed.";
     }
+    if (label == "Missed Mate") {
+        return "Forced mate missed.";
+    }
     if (label == "Mistake") {
         return "Large eval drop.";
     }
     return "Major swing; check tactics.";
 }
+
+bool FileExists(const std::string& path) {
+    const DWORD attributes = GetFileAttributesA(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+std::string QuoteCommandPath(const std::string& path) {
+    return "\"" + path + "\"";
+}
+
+std::string FindStockfishExecutable() {
+    const std::array<std::string, 4> candidates = {
+        "engines\\stockfish.exe",
+        "stockfish.exe",
+        "engines\\stockfish-windows-x86-64-avx2.exe",
+        "engines\\stockfish-windows-x86-64.exe"
+    };
+
+    for (const std::string& candidate : candidates) {
+        if (FileExists(candidate)) {
+            return candidate;
+        }
+    }
+    return "stockfish.exe";
+}
+
+struct UciAnalysis {
+    bool ok = false;
+    int scoreForSideToMove = 0;
+    std::string bestMoveUci;
+};
+
+class UciEngine {
+    public:
+        UciEngine() = default;
+        ~UciEngine() {
+            close();
+        }
+
+        bool start(const std::string& executablePath) {
+            close();
+
+            SECURITY_ATTRIBUTES securityAttributes = {};
+            securityAttributes.nLength = sizeof(securityAttributes);
+            securityAttributes.bInheritHandle = TRUE;
+
+            HANDLE childStdoutRead = nullptr;
+            HANDLE childStdoutWrite = nullptr;
+            HANDLE childStdinRead = nullptr;
+            HANDLE childStdinWrite = nullptr;
+
+            if (!CreatePipe(&childStdoutRead, &childStdoutWrite, &securityAttributes, 0)) {
+                return false;
+            }
+            if (!SetHandleInformation(childStdoutRead, HANDLE_FLAG_INHERIT, 0)) {
+                CloseHandle(childStdoutRead);
+                CloseHandle(childStdoutWrite);
+                return false;
+            }
+            if (!CreatePipe(&childStdinRead, &childStdinWrite, &securityAttributes, 0)) {
+                CloseHandle(childStdoutRead);
+                CloseHandle(childStdoutWrite);
+                return false;
+            }
+            if (!SetHandleInformation(childStdinWrite, HANDLE_FLAG_INHERIT, 0)) {
+                CloseHandle(childStdoutRead);
+                CloseHandle(childStdoutWrite);
+                CloseHandle(childStdinRead);
+                CloseHandle(childStdinWrite);
+                return false;
+            }
+
+            STARTUPINFOA startupInfo = {};
+            startupInfo.cb = sizeof(startupInfo);
+            startupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startupInfo.hStdInput = childStdinRead;
+            startupInfo.hStdOutput = childStdoutWrite;
+            startupInfo.hStdError = childStdoutWrite;
+
+            PROCESS_INFORMATION processInfo = {};
+            std::string commandLine = QuoteCommandPath(executablePath);
+            const BOOL created = CreateProcessA(
+                nullptr,
+                commandLine.data(),
+                nullptr,
+                nullptr,
+                TRUE,
+                CREATE_NO_WINDOW,
+                nullptr,
+                nullptr,
+                &startupInfo,
+                &processInfo);
+
+            CloseHandle(childStdinRead);
+            CloseHandle(childStdoutWrite);
+
+            if (!created) {
+                CloseHandle(childStdoutRead);
+                CloseHandle(childStdinWrite);
+                return false;
+            }
+
+            process_ = processInfo.hProcess;
+            thread_ = processInfo.hThread;
+            stdoutRead_ = childStdoutRead;
+            stdinWrite_ = childStdinWrite;
+
+            if (!sendCommand("uci") || !waitFor("uciok", 5000)) {
+                close();
+                return false;
+            }
+            sendCommand("setoption name Threads value 2");
+            sendCommand("setoption name Hash value 64");
+            if (!sendCommand("isready") || !waitFor("readyok", 5000)) {
+                close();
+                return false;
+            }
+
+            ready_ = true;
+            return true;
+        }
+
+        UciAnalysis analyzeFen(const std::string& fen) {
+            UciAnalysis analysis;
+            if (!ready_) {
+                return analysis;
+            }
+
+            if (!sendCommand("position fen " + fen)) {
+                return analysis;
+            }
+            if (!sendCommand("go depth " + std::to_string(kStockfishReviewDepth))) {
+                return analysis;
+            }
+
+            std::string line;
+            int latestScore = 0;
+            bool hasScore = false;
+            const ULONGLONG deadline = GetTickCount64() + 15000;
+            while (GetTickCount64() < deadline && readLine(line, 1000)) {
+                int parsedScore = 0;
+                if (parseScore(line, parsedScore)) {
+                    latestScore = parsedScore;
+                    hasScore = true;
+                }
+
+                if (line.rfind("bestmove ", 0) == 0) {
+                    std::istringstream stream(line);
+                    std::string token;
+                    stream >> token >> analysis.bestMoveUci;
+                    analysis.scoreForSideToMove = hasScore ? latestScore : 0;
+                    analysis.ok = !analysis.bestMoveUci.empty() && analysis.bestMoveUci != "(none)";
+                    return analysis;
+                }
+            }
+
+            sendCommand("stop");
+            return analysis;
+        }
+
+    private:
+        bool sendCommand(const std::string& command) {
+            if (!stdinWrite_) {
+                return false;
+            }
+
+            const std::string line = command + "\n";
+            DWORD written = 0;
+            return WriteFile(stdinWrite_, line.data(), static_cast<DWORD>(line.size()), &written, nullptr)
+                && written == line.size();
+        }
+
+        bool readLine(std::string& line, DWORD timeoutMs) {
+            line.clear();
+            const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+            while (GetTickCount64() < deadline) {
+                DWORD available = 0;
+                if (!PeekNamedPipe(stdoutRead_, nullptr, 0, nullptr, &available, nullptr)) {
+                    return false;
+                }
+                if (available == 0) {
+                    Sleep(2);
+                    continue;
+                }
+
+                char ch = '\0';
+                DWORD read = 0;
+                if (!ReadFile(stdoutRead_, &ch, 1, &read, nullptr) || read == 0) {
+                    return false;
+                }
+                if (ch == '\r') {
+                    continue;
+                }
+                if (ch == '\n') {
+                    return true;
+                }
+                line += ch;
+            }
+            return false;
+        }
+
+        bool waitFor(const std::string& expectedText, DWORD timeoutMs) {
+            const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+            std::string line;
+            while (GetTickCount64() < deadline) {
+                if (readLine(line, 250) && line.find(expectedText) != std::string::npos) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool parseScore(const std::string& line, int& score) const {
+            std::istringstream stream(line);
+            std::string token;
+            while (stream >> token) {
+                if (token != "score") {
+                    continue;
+                }
+
+                std::string scoreType;
+                int value = 0;
+                if (!(stream >> scoreType >> value)) {
+                    return false;
+                }
+                if (scoreType == "cp") {
+                    score = value;
+                    return true;
+                }
+                if (scoreType == "mate") {
+                    const int sign = value >= 0 ? 1 : -1;
+                    score = sign * (kReviewMateScore - std::min(std::abs(value), 100));
+                    return true;
+                }
+                return false;
+            }
+            return false;
+        }
+
+        void close() {
+            if (stdinWrite_) {
+                sendCommand("quit");
+            }
+            if (process_) {
+                WaitForSingleObject(process_, 200);
+            }
+            if (stdinWrite_) {
+                CloseHandle(stdinWrite_);
+                stdinWrite_ = nullptr;
+            }
+            if (stdoutRead_) {
+                CloseHandle(stdoutRead_);
+                stdoutRead_ = nullptr;
+            }
+            if (thread_) {
+                CloseHandle(thread_);
+                thread_ = nullptr;
+            }
+            if (process_) {
+                CloseHandle(process_);
+                process_ = nullptr;
+            }
+            ready_ = false;
+        }
+
+        HANDLE process_ = nullptr;
+        HANDLE thread_ = nullptr;
+        HANDLE stdoutRead_ = nullptr;
+        HANDLE stdinWrite_ = nullptr;
+        bool ready_ = false;
+};
 
 RECT MakeRect(int left, int top, int width, int height) {
     RECT rect = {left, top, left + width, top + height};
@@ -721,11 +1173,44 @@ void UpdateReviewBoard(GuiState& state) {
     state.selectedSquare = -1;
 }
 
-ReviewMoveInfo AnalyzeReviewMove(const Board& before, const Move& playedMove, const MoveGen& moveGen) {
+ReviewMoveInfo AnalyzeReviewMove(const Board& before, const Move& playedMove, const MoveGen& moveGen, UciEngine* engine) {
     ReviewMoveInfo info;
     info.beforeEvalWhite = EvalWhiteWithTerminal(before, moveGen);
     info.playedMove = playedMove;
     info.bestMove = playedMove;
+
+    Board after(before);
+    if (!after.makeMove(playedMove)) {
+        info.afterEvalWhite = info.beforeEvalWhite;
+        info.centipawnLoss = 0;
+        info.label = "Review";
+        info.note = "Move could not be replayed.";
+        return info;
+    }
+
+    if (engine) {
+        const UciAnalysis beforeAnalysis = engine->analyzeFen(BoardToFen(before));
+        const UciAnalysis afterAnalysis = engine->analyzeFen(BoardToFen(after));
+        if (beforeAnalysis.ok && afterAnalysis.ok) {
+            const Move engineBestMove = MoveFromUci(before, moveGen, beforeAnalysis.bestMoveUci);
+            if (engineBestMove.getFrom() != 0 || engineBestMove.getTo() != 0 || engineBestMove.getFlags() != Quiet) {
+                info.bestMove = engineBestMove;
+            }
+
+            info.bestScoreForMover = beforeAnalysis.scoreForSideToMove;
+            info.playedScoreForMover = -afterAnalysis.scoreForSideToMove;
+            info.afterEvalWhite = after.sideToMove ? -afterAnalysis.scoreForSideToMove : afterAnalysis.scoreForSideToMove;
+            info.isBestMove = SameMove(playedMove, info.bestMove);
+            info.centipawnLoss = std::max(0, info.bestScoreForMover - info.playedScoreForMover);
+            info.label = ClassificationForLoss(
+                info.centipawnLoss,
+                info.isBestMove,
+                info.bestScoreForMover,
+                info.playedScoreForMover);
+            info.note = "Stockfish depth " + std::to_string(kStockfishReviewDepth);
+            return info;
+        }
+    }
 
     MoveList moves;
     moveGen.generateAll(before, moves);
@@ -744,15 +1229,6 @@ ReviewMoveInfo AnalyzeReviewMove(const Board& before, const Move& playedMove, co
             bestScore = score;
             info.bestMove = moves.moves[i];
         }
-    }
-
-    Board after(before);
-    if (!after.makeMove(playedMove)) {
-        info.afterEvalWhite = info.beforeEvalWhite;
-        info.centipawnLoss = 0;
-        info.label = "Review";
-        info.note = "Move could not be replayed.";
-        return info;
     }
 
     info.afterEvalWhite = EvalWhiteWithTerminal(after, moveGen);
@@ -774,10 +1250,16 @@ void BuildReview(GuiState& state) {
     state.reviewMoves.clear();
     state.reviewMoves.reserve(state.gameMoves.size());
 
+    UciEngine engine;
+    UciEngine* reviewEngine = nullptr;
+    if (engine.start(FindStockfishExecutable())) {
+        reviewEngine = &engine;
+    }
+
     Board replayBoard;
     replayBoard.defaultBoard();
     for (const Move& move : state.gameMoves) {
-        ReviewMoveInfo info = AnalyzeReviewMove(replayBoard, move, state.moveGen);
+        ReviewMoveInfo info = AnalyzeReviewMove(replayBoard, move, state.moveGen, reviewEngine);
         state.reviewMoves.push_back(info);
         replayBoard.makeMove(move);
     }
@@ -1137,7 +1619,8 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
     RECT accuracyLabel = {scoreCard.left + 98, scoreCard.top + 15, scoreCard.right - 14, scoreCard.top + 39};
     DrawTextLeftA(hdc, accuracyLabel, "Accuracy", RGB(196, 206, 212));
 
-    char summaryText[96];
+    const int missedCount = CountReviewLabel(state, "Missed Win") + CountReviewLabel(state, "Missed Mate");
+    char summaryText[128];
     std::snprintf(
         summaryText,
         sizeof(summaryText),
@@ -1149,11 +1632,11 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
         CountReviewLabel(state, "Inaccuracy"),
         CountReviewLabel(state, "Mistake"),
         CountReviewLabel(state, "Blunder"),
-        CountReviewLabel(state, "Missed Win"));
+        missedCount);
     RECT summaryRect = {scoreCard.left + 98, scoreCard.top + 42, scoreCard.right - 14, scoreCard.bottom - 12};
     DrawTextLeftA(hdc, summaryRect, summaryText, RGB(170, 182, 190), DT_LEFT | DT_TOP | DT_WORDBREAK);
 
-    RECT moveCard = {panel.left + 24, panel.top + 520, panel.right - 24, panel.top + 640};
+    RECT moveCard = {panel.left + 24, panel.top + 512, panel.right - 24, panel.top + 644};
     DrawRoundPanel(hdc, moveCard, RGB(31, 37, 44), RGB(68, 80, 91));
 
     SelectObject(hdc, labelFont);
@@ -1169,7 +1652,7 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
         std::snprintf(
             detailText,
             sizeof(detailText),
-            "Move %d/%d: %s\nBest: %s (%s)\nPlayed: %s  Loss: %d cp\nEval: %s  %s",
+            "Move %d/%d: %s\nBest: %s (%s)\nPlayed: %s | Loss: %d cp | Eval: %s",
             currentPly,
             totalPly,
             MoveText(info.playedMove).c_str(),
@@ -1177,8 +1660,7 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
             FormatMoverScore(info.bestScoreForMover).c_str(),
             FormatMoverScore(info.playedScoreForMover).c_str(),
             info.centipawnLoss,
-            FormatEval(info.afterEvalWhite).c_str(),
-            info.note.c_str());
+            FormatEval(info.afterEvalWhite).c_str());
         RECT details = {moveCard.left + 16, moveCard.top + 44, moveCard.right - 16, moveCard.bottom - 14};
         DrawTextLeftA(hdc, details, detailText, RGB(190, 201, 208), DT_LEFT | DT_TOP | DT_WORDBREAK);
     }
