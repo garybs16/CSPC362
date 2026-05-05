@@ -8,15 +8,18 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <mmsystem.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -92,6 +95,7 @@ struct GuiState {
     std::string resultText;
     std::vector<Move> gameMoves;
     std::vector<ReviewMoveInfo> reviewMoves;
+    std::vector<std::string> positionHistory;
     int reviewPly = 0;
 };
 
@@ -496,6 +500,151 @@ std::string BoardToFen(const Board& board) {
     fen += board.enPassant == -1 ? "-" : SquareName(board.enPassant);
     fen += " 0 1";
     return fen;
+}
+
+bool HasLegalEnPassantCapture(const Board& board) {
+    if (board.enPassant < 0 || board.enPassant > 63) {
+        return false;
+    }
+
+    const bool movingBlack = board.sideToMove;
+    const int pawnPiece = movingBlack ? bP : P;
+    const int pawnRank = movingBlack ? 3 : 4;
+    const int epRank = board.enPassant / 8;
+    const int epFile = board.enPassant % 8;
+    if (epRank != (movingBlack ? 2 : 5)) {
+        return false;
+    }
+
+    if (epFile > 0 && board.getPieceAt((pawnRank * 8) + epFile - 1) == pawnPiece) {
+        return true;
+    }
+    if (epFile < 7 && board.getPieceAt((pawnRank * 8) + epFile + 1) == pawnPiece) {
+        return true;
+    }
+    return false;
+}
+
+std::string BoardPositionKey(const Board& board) {
+    std::string key;
+    for (int rank = 7; rank >= 0; --rank) {
+        int emptyCount = 0;
+        for (int file = 0; file < 8; ++file) {
+            const int piece = board.getPieceAt((rank * 8) + file);
+            if (piece == -1) {
+                ++emptyCount;
+                continue;
+            }
+            if (emptyCount > 0) {
+                key += static_cast<char>('0' + emptyCount);
+                emptyCount = 0;
+            }
+            key += PieceFenChar(piece);
+        }
+        if (emptyCount > 0) {
+            key += static_cast<char>('0' + emptyCount);
+        }
+        if (rank > 0) {
+            key += '/';
+        }
+    }
+
+    key += board.sideToMove ? " b " : " w ";
+    std::string castling;
+    if (board.castling & WhiteKingSide) {
+        castling += 'K';
+    }
+    if (board.castling & WhiteQueenSide) {
+        castling += 'Q';
+    }
+    if (board.castling & BlackKingSide) {
+        castling += 'k';
+    }
+    if (board.castling & BlackQueenSide) {
+        castling += 'q';
+    }
+    key += castling.empty() ? "-" : castling;
+    key += ' ';
+    key += HasLegalEnPassantCapture(board) ? SquareName(board.enPassant) : "-";
+    return key;
+}
+
+int CountBits(uint64_t value) {
+    int count = 0;
+    while (value != 0) {
+        value &= value - 1;
+        ++count;
+    }
+    return count;
+}
+
+bool IsLightSquare(int square) {
+    const int rank = square / 8;
+    const int file = square % 8;
+    return ((rank + file) % 2) == 0;
+}
+
+bool AllBishopsOnSameColor(uint64_t bishops) {
+    bool hasColor = false;
+    bool lightSquare = false;
+    for (int square = 0; square < 64; ++square) {
+        if (((bishops >> square) & 1ULL) == 0) {
+            continue;
+        }
+
+        const bool currentLightSquare = IsLightSquare(square);
+        if (!hasColor) {
+            hasColor = true;
+            lightSquare = currentLightSquare;
+        } else if (lightSquare != currentLightSquare) {
+            return false;
+        }
+    }
+    return hasColor;
+}
+
+bool HasInsufficientMaterial(const Board& board) {
+    if (board.piece_bitboard[P] || board.piece_bitboard[bP]
+        || board.piece_bitboard[R] || board.piece_bitboard[bR]
+        || board.piece_bitboard[Q] || board.piece_bitboard[bQ]) {
+        return false;
+    }
+
+    const uint64_t bishops = board.piece_bitboard[B] | board.piece_bitboard[bB];
+    const uint64_t knights = board.piece_bitboard[N] | board.piece_bitboard[bN];
+    const int bishopCount = CountBits(bishops);
+    const int knightCount = CountBits(knights);
+    const int minorCount = bishopCount + knightCount;
+
+    if (minorCount == 0) {
+        return true;
+    }
+    if (minorCount == 1) {
+        return true;
+    }
+    if (knightCount == 0 && AllBishopsOnSameColor(bishops)) {
+        return true;
+    }
+    return false;
+}
+
+void RecordCurrentPosition(GuiState& state) {
+    state.positionHistory.push_back(BoardPositionKey(state.board));
+}
+
+int CurrentPositionRepetitions(const GuiState& state) {
+    if (state.positionHistory.empty()) {
+        return 0;
+    }
+
+    const std::string& currentPosition = state.positionHistory.back();
+    int count = 0;
+    for (const std::string& position : state.positionHistory) {
+        if (position == currentPosition) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 bool SameMove(const Move& left, const Move& right) {
@@ -1010,6 +1159,125 @@ bool IsRobotTurn(const GuiState& state) {
     return !state.reviewMode && state.mode == GameMode::HumanVsRobot && state.board.sideToMove != state.humanPlaysBlack;
 }
 
+enum class ChessSound {
+    Move,
+    Capture,
+    Check,
+    GameEnd,
+    Draw
+};
+
+void PlayChessSound(ChessSound sound) {
+    struct Tone {
+        double frequency;
+        double durationSeconds;
+        double volume;
+    };
+
+    auto appendLe16 = [](std::vector<char>& data, int value) {
+        data.push_back(static_cast<char>(value & 0xFF));
+        data.push_back(static_cast<char>((value >> 8) & 0xFF));
+    };
+
+    auto appendLe32 = [](std::vector<char>& data, int value) {
+        data.push_back(static_cast<char>(value & 0xFF));
+        data.push_back(static_cast<char>((value >> 8) & 0xFF));
+        data.push_back(static_cast<char>((value >> 16) & 0xFF));
+        data.push_back(static_cast<char>((value >> 24) & 0xFF));
+    };
+
+    auto buildWave = [&](const std::vector<Tone>& tones) {
+        constexpr int sampleRate = 44100;
+        constexpr int bitsPerSample = 16;
+        constexpr int channels = 1;
+        constexpr double pi = 3.14159265358979323846;
+
+        int sampleCount = 0;
+        for (const Tone& tone : tones) {
+            sampleCount += static_cast<int>(tone.durationSeconds * sampleRate);
+        }
+
+        const int dataBytes = sampleCount * channels * (bitsPerSample / 8);
+        std::vector<char> wave;
+        wave.reserve(44 + dataBytes);
+
+        wave.insert(wave.end(), {'R', 'I', 'F', 'F'});
+        appendLe32(wave, 36 + dataBytes);
+        wave.insert(wave.end(), {'W', 'A', 'V', 'E'});
+        wave.insert(wave.end(), {'f', 'm', 't', ' '});
+        appendLe32(wave, 16);
+        appendLe16(wave, 1);
+        appendLe16(wave, channels);
+        appendLe32(wave, sampleRate);
+        appendLe32(wave, sampleRate * channels * (bitsPerSample / 8));
+        appendLe16(wave, channels * (bitsPerSample / 8));
+        appendLe16(wave, bitsPerSample);
+        wave.insert(wave.end(), {'d', 'a', 't', 'a'});
+        appendLe32(wave, dataBytes);
+
+        for (const Tone& tone : tones) {
+            const int toneSamples = static_cast<int>(tone.durationSeconds * sampleRate);
+            for (int i = 0; i < toneSamples; ++i) {
+                const double t = static_cast<double>(i) / sampleRate;
+                const double attack = std::min(1.0, static_cast<double>(i) / (sampleRate * 0.006));
+                const double release = std::min(1.0, static_cast<double>(toneSamples - i) / (sampleRate * 0.035));
+                const double envelope = attack * release;
+                const double body = std::sin(2.0 * pi * tone.frequency * t);
+                const double click = std::sin(2.0 * pi * (tone.frequency * 1.5) * t) * 0.18;
+                const int sample = static_cast<int>((body + click) * envelope * tone.volume * 32767.0);
+                appendLe16(wave, std::max(-32768, std::min(32767, sample)));
+            }
+        }
+
+        return wave;
+    };
+
+    static const std::vector<char> moveSound = buildWave({{620.0, 0.075, 0.28}, {465.0, 0.045, 0.18}});
+    static const std::vector<char> captureSound = buildWave({{360.0, 0.055, 0.34}, {250.0, 0.075, 0.26}});
+    static const std::vector<char> checkSound = buildWave({{720.0, 0.055, 0.24}, {940.0, 0.075, 0.28}});
+    static const std::vector<char> gameEndSound = buildWave({{560.0, 0.070, 0.26}, {420.0, 0.090, 0.28}, {315.0, 0.130, 0.30}});
+    static const std::vector<char> drawSound = buildWave({{410.0, 0.080, 0.22}, {410.0, 0.080, 0.18}});
+
+    const std::vector<char>* wave = &moveSound;
+    switch (sound) {
+        case ChessSound::Move:
+            wave = &moveSound;
+            break;
+        case ChessSound::Capture:
+            wave = &captureSound;
+            break;
+        case ChessSound::Check:
+            wave = &checkSound;
+            break;
+        case ChessSound::GameEnd:
+            wave = &gameEndSound;
+            break;
+        case ChessSound::Draw:
+            wave = &drawSound;
+            break;
+    }
+
+    PlaySoundA(wave->data(), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+}
+
+bool IsDrawResultText(const std::string& statusText) {
+    return statusText == "Stalemate" || statusText.rfind("Draw", 0) == 0;
+}
+
+void PlaySoundAfterMove(const GuiState& state, const Move& move) {
+    if (state.gameOver) {
+        PlayChessSound(IsDrawResultText(state.statusText) ? ChessSound::Draw : ChessSound::GameEnd);
+        return;
+    }
+
+    if (state.moveGen.isInCheck(state.board, state.board.sideToMove)) {
+        PlayChessSound(ChessSound::Check);
+        return;
+    }
+
+    PlayChessSound(move.isCapture() ? ChessSound::Capture : ChessSound::Move);
+}
+
 bool IsCurrentPlayerPiece(const GuiState& state, int square) {
     return state.board.isSidePiece(square, state.board.sideToMove);
 }
@@ -1106,6 +1374,7 @@ void MarkFlagLoss(GuiState& state, bool blackFlagged) {
     state.gameOverMessageShown = false;
     state.statusText = std::string(blackFlagged ? "Black" : "White") + " ran out of time";
     state.resultText = state.statusText;
+    PlayChessSound(ChessSound::GameEnd);
 }
 
 bool DeductActiveClock(GuiState& state, std::int64_t elapsedMs) {
@@ -1265,17 +1534,35 @@ void BuildReview(GuiState& state) {
     }
 }
 
-void EnterReviewMode(GuiState& state) {
+void EnterReviewMode(GuiState& state, HWND hwnd = nullptr) {
     if (state.gameMoves.empty()) {
         return;
     }
 
-    if (state.reviewMoves.size() != state.gameMoves.size()) {
-        BuildReview(state);
-    }
-
     state.reviewMode = true;
     state.reviewPly = static_cast<int>(state.gameMoves.size());
+    state.reviewBoard = state.board;
+    state.reviewHasLastMove = state.hasLastMove;
+    state.reviewLastMove = state.lastMove;
+    state.selectedSquare = -1;
+
+    if (state.reviewMoves.size() != state.gameMoves.size()) {
+        state.statusText = "Analyzing game review...";
+        if (hwnd) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            UpdateWindow(hwnd);
+        }
+
+        HCURSOR oldCursor = nullptr;
+        if (hwnd) {
+            oldCursor = SetCursor(LoadCursor(nullptr, IDC_WAIT));
+        }
+        BuildReview(state);
+        if (oldCursor) {
+            SetCursor(oldCursor);
+        }
+    }
+
     UpdateReviewBoard(state);
 }
 
@@ -1350,6 +1637,30 @@ void RefreshGameState(GuiState& state) {
         return;
     }
 
+    if (state.board.halfmoveClock >= 100) {
+        state.gameOver = true;
+        state.gameOverMessageShown = false;
+        state.statusText = "Draw by fifty-move rule";
+        state.resultText = state.statusText;
+        return;
+    }
+
+    if (CurrentPositionRepetitions(state) >= 3) {
+        state.gameOver = true;
+        state.gameOverMessageShown = false;
+        state.statusText = "Draw by threefold repetition";
+        state.resultText = state.statusText;
+        return;
+    }
+
+    if (HasInsufficientMaterial(state.board)) {
+        state.gameOver = true;
+        state.gameOverMessageShown = false;
+        state.statusText = "Draw by insufficient material";
+        state.resultText = state.statusText;
+        return;
+    }
+
     state.gameOver = false;
     state.gameOverMessageShown = false;
     if (!state.gameStarted) {
@@ -1376,6 +1687,8 @@ void StartNewGame(GuiState& state) {
     state.resultText.clear();
     state.gameMoves.clear();
     state.reviewMoves.clear();
+    state.positionHistory.clear();
+    RecordCurrentPosition(state);
     ResetClocks(state);
     RefreshGameState(state);
 }
@@ -1446,10 +1759,12 @@ bool TryApplySelectedMove(GuiState& state, HWND hwnd, int x, int y, int destinat
 
     state.gameMoves.push_back(chosenMove);
     state.reviewMoves.clear();
+    RecordCurrentPosition(state);
     state.lastMove = chosenMove;
     state.hasLastMove = true;
     state.selectedSquare = -1;
     RefreshGameState(state);
+    PlaySoundAfterMove(state, chosenMove);
     BeginNextTurn(state);
     return true;
 }
@@ -1473,6 +1788,7 @@ void SurrenderCurrentSide(GuiState& state) {
     state.gameOverMessageShown = false;
     state.statusText = std::string(state.board.sideToMove ? "Black" : "White") + " surrendered";
     state.resultText = state.statusText;
+    PlayChessSound(ChessSound::GameEnd);
 }
 
 void RunRobotTurn(GuiState& state, HWND hwnd) {
@@ -1506,9 +1822,11 @@ void RunRobotTurn(GuiState& state, HWND hwnd) {
 
         state.gameMoves.push_back(robotMove);
         state.reviewMoves.clear();
+        RecordCurrentPosition(state);
         state.lastMove = robotMove;
         state.hasLastMove = true;
         RefreshGameState(state);
+        PlaySoundAfterMove(state, robotMove);
         BeginNextTurn(state);
     }
 
@@ -1561,8 +1879,8 @@ void DrawClockCard(HDC hdc, const RECT& rect, const char* sideLabel, const std::
     const COLORREF borderColor = active ? RGB(118, 158, 164) : RGB(72, 82, 94);
     DrawRoundPanel(hdc, rect, fillColor, borderColor);
 
-    RECT sideRect = {rect.left + 14, rect.top + 10, rect.right - 14, rect.top + 28};
-    RECT timeRect = {rect.left + 14, rect.top + 26, rect.right - 14, rect.bottom - 10};
+    RECT sideRect = {rect.left + 14, rect.top + 8, rect.right - 14, rect.top + 24};
+    RECT timeRect = {rect.left + 14, rect.top + 21, rect.right - 14, rect.bottom - 3};
     HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, labelFont));
     DrawTextLeftA(hdc, sideRect, sideLabel, RGB(188, 199, 207));
     SelectObject(hdc, valueFont);
@@ -1593,7 +1911,102 @@ int CountReviewLabel(const GuiState& state, const char* label) {
     return count;
 }
 
-void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT buttonFont, HFONT clockFont) {
+int ReviewAccuracyForSide(const GuiState& state, bool blackSide) {
+    int totalScore = 0;
+    int moveCount = 0;
+    for (std::size_t i = 0; i < state.reviewMoves.size(); ++i) {
+        const bool moveByBlack = (i % 2) == 1;
+        if (moveByBlack != blackSide) {
+            continue;
+        }
+
+        totalScore += QualityScore(state.reviewMoves[i].label);
+        ++moveCount;
+    }
+
+    if (moveCount == 0) {
+        return 100;
+    }
+    return std::max(0, std::min(100, totalScore / moveCount));
+}
+
+void DrawReviewAccuracyTile(HDC hdc, const RECT& rect, const char* sideLabel, int accuracy, bool currentSide, HFONT labelFont, HFONT valueFont) {
+    const COLORREF fillColor = currentSide ? RGB(50, 67, 75) : RGB(31, 37, 44);
+    const COLORREF borderColor = currentSide ? RGB(116, 157, 164) : RGB(68, 80, 91);
+    DrawRoundPanel(hdc, rect, fillColor, borderColor);
+
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, labelFont));
+    RECT sideRect = {rect.left + 12, rect.top + 8, rect.right - 12, rect.top + 28};
+    DrawTextLeftA(hdc, sideRect, sideLabel, RGB(185, 198, 206));
+
+    SelectObject(hdc, valueFont);
+    char accuracyText[16];
+    std::snprintf(accuracyText, sizeof(accuracyText), "%d%%", accuracy);
+    RECT valueRect = {rect.left + 12, rect.top + 27, rect.right - 12, rect.bottom - 6};
+    DrawTextCenterA(hdc, valueRect, accuracyText, RGB(239, 242, 240));
+
+    SelectObject(hdc, oldFont);
+}
+
+void DrawReviewProgressBar(HDC hdc, const RECT& rect, int currentPly, int totalPly) {
+    RECT track = {rect.left, rect.top, rect.right, rect.bottom};
+    DrawRoundPanel(hdc, track, RGB(24, 29, 35), RGB(55, 67, 77));
+
+    if (totalPly <= 0 || currentPly <= 0) {
+        return;
+    }
+
+    RECT fill = {track.left + 3, track.top + 3, track.right - 3, track.bottom - 3};
+    const int fillWidth = ((fill.right - fill.left) * std::min(currentPly, totalPly)) / totalPly;
+    fill.right = fill.left + std::max(2, fillWidth);
+    FillRectColor(hdc, fill, RGB(96, 151, 139));
+}
+
+void DrawReviewTopSummary(HDC hdc, const GuiState& state, HFONT labelFont, HFONT valueFont) {
+    const RECT panel = PanelRect();
+    const int currentPly = state.reviewPly;
+    const int totalPly = static_cast<int>(state.gameMoves.size());
+    const int availableWidth = kPanelWidth - 48;
+    const int spacing = 12;
+    const int cardWidth = (availableWidth - spacing) / 2;
+    const bool whiteCurrent = currentPly > 0 && (currentPly % 2) == 1;
+    const bool blackCurrent = currentPly > 0 && (currentPly % 2) == 0;
+
+    RECT whiteCard = MakeRect(panel.left + 24, panel.top + 86, cardWidth, 62);
+    RECT blackCard = MakeRect(panel.left + 24 + cardWidth + spacing, panel.top + 86, cardWidth, 62);
+    DrawReviewAccuracyTile(hdc, whiteCard, "White", ReviewAccuracyForSide(state, false), whiteCurrent, labelFont, valueFont);
+    DrawReviewAccuracyTile(hdc, blackCard, "Black", ReviewAccuracyForSide(state, true), blackCurrent, labelFont, valueFont);
+
+    RECT progressCard = {panel.left + 24, panel.top + 156, panel.right - 24, panel.top + 194};
+    DrawRoundPanel(hdc, progressCard, RGB(31, 37, 44), RGB(68, 80, 91));
+
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, labelFont));
+    char progressText[64];
+    std::snprintf(progressText, sizeof(progressText), "%d/%d  Avg %d%%", currentPly, totalPly, ReviewAccuracy(state));
+    RECT progressLabel = {progressCard.left + 12, progressCard.top + 8, progressCard.left + 166, progressCard.bottom - 8};
+    DrawTextLeftA(hdc, progressLabel, progressText, RGB(188, 201, 209));
+
+    RECT progressBar = {progressCard.left + 174, progressCard.top + 13, progressCard.right - 12, progressCard.bottom - 13};
+    DrawReviewProgressBar(hdc, progressBar, currentPly, totalPly);
+    SelectObject(hdc, oldFont);
+}
+
+void DrawReviewCountPill(HDC hdc, const RECT& rect, const char* label, int count, COLORREF accentColor, HFONT font) {
+    DrawRoundPanel(hdc, rect, RGB(26, 31, 38), accentColor);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(hdc, font));
+
+    RECT labelRect = {rect.left + 10, rect.top + 2, rect.right - 42, rect.bottom - 2};
+    DrawTextLeftA(hdc, labelRect, label, RGB(203, 212, 218));
+
+    char countText[12];
+    std::snprintf(countText, sizeof(countText), "%d", count);
+    RECT countRect = {rect.right - 38, rect.top + 2, rect.right - 8, rect.bottom - 2};
+    DrawTextCenterA(hdc, countRect, countText, RGB(239, 242, 240));
+
+    SelectObject(hdc, oldFont);
+}
+
+void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT buttonFont) {
     const RECT panel = PanelRect();
     const int currentPly = state.reviewPly;
     const int totalPly = static_cast<int>(state.gameMoves.size());
@@ -1604,27 +2017,20 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
 
     SelectObject(hdc, labelFont);
     RECT reviewTitle = {panel.left + 24, panel.top + 354, panel.right - 24, panel.top + 380};
-    DrawTextLeftA(hdc, reviewTitle, "Game Review", RGB(218, 225, 228));
+    DrawTextLeftA(hdc, reviewTitle, "Move Quality", RGB(218, 225, 228));
 
     RECT scoreCard = {panel.left + 24, panel.top + 386, panel.right - 24, panel.top + 506};
     DrawRoundPanel(hdc, scoreCard, RGB(31, 37, 44), RGB(68, 80, 91));
 
-    SelectObject(hdc, clockFont);
-    char accuracyText[32];
-    std::snprintf(accuracyText, sizeof(accuracyText), "%d", ReviewAccuracy(state));
-    RECT accuracyValue = {scoreCard.left + 14, scoreCard.top + 16, scoreCard.left + 90, scoreCard.top + 62};
-    DrawTextCenterA(hdc, accuracyValue, accuracyText, RGB(236, 239, 238));
-
-    SelectObject(hdc, labelFont);
-    RECT accuracyLabel = {scoreCard.left + 98, scoreCard.top + 15, scoreCard.right - 14, scoreCard.top + 39};
-    DrawTextLeftA(hdc, accuracyLabel, "Accuracy", RGB(196, 206, 212));
-
     const int missedCount = CountReviewLabel(state, "Missed Win") + CountReviewLabel(state, "Missed Mate");
-    char summaryText[128];
-    std::snprintf(
-        summaryText,
-        sizeof(summaryText),
-        "Best %d  Excel %d  Good %d\nNeutral %d  Inacc %d\nMistake %d  Blunder %d  Missed %d",
+    const int pillWidth = ((scoreCard.right - scoreCard.left) - 42) / 2;
+    const int pillHeight = 22;
+    const int pillGap = 6;
+    const int leftX = scoreCard.left + 12;
+    const int rightX = leftX + pillWidth + 18;
+    const int topY = scoreCard.top + 12;
+    const char* labels[8] = {"Best", "Excel", "Good", "Neutral", "Inacc", "Mistake", "Blunder", "Missed"};
+    const int counts[8] = {
         CountReviewLabel(state, "Best"),
         CountReviewLabel(state, "Excellent"),
         CountReviewLabel(state, "Good"),
@@ -1632,37 +2038,66 @@ void DrawReviewControls(HDC hdc, const GuiState& state, HFONT labelFont, HFONT b
         CountReviewLabel(state, "Inaccuracy"),
         CountReviewLabel(state, "Mistake"),
         CountReviewLabel(state, "Blunder"),
-        missedCount);
-    RECT summaryRect = {scoreCard.left + 98, scoreCard.top + 42, scoreCard.right - 14, scoreCard.bottom - 12};
-    DrawTextLeftA(hdc, summaryRect, summaryText, RGB(170, 182, 190), DT_LEFT | DT_TOP | DT_WORDBREAK);
+        missedCount
+    };
+    const COLORREF colors[8] = {
+        ClassificationColor("Best"),
+        ClassificationColor("Excellent"),
+        ClassificationColor("Good"),
+        ClassificationColor("Neutral"),
+        ClassificationColor("Inaccuracy"),
+        ClassificationColor("Mistake"),
+        ClassificationColor("Blunder"),
+        RGB(224, 150, 82)
+    };
+
+    for (int i = 0; i < 8; ++i) {
+        const int columnX = (i % 2 == 0) ? leftX : rightX;
+        const int rowY = topY + ((i / 2) * (pillHeight + pillGap));
+        RECT pillRect = MakeRect(columnX, rowY, pillWidth, pillHeight);
+        DrawReviewCountPill(hdc, pillRect, labels[i], counts[i], colors[i], labelFont);
+    }
 
     RECT moveCard = {panel.left + 24, panel.top + 512, panel.right - 24, panel.top + 644};
     DrawRoundPanel(hdc, moveCard, RGB(31, 37, 44), RGB(68, 80, 91));
 
     SelectObject(hdc, labelFont);
-    if (currentPly == 0 || state.reviewMoves.empty()) {
+    if (state.reviewMoves.size() != state.gameMoves.size()) {
         RECT moveInfo = {moveCard.left + 16, moveCard.top + 16, moveCard.right - 16, moveCard.bottom - 16};
-        DrawTextLeftA(hdc, moveInfo, "Start position\nUse Previous and Next to replay the game.", RGB(190, 201, 208), DT_LEFT | DT_TOP | DT_WORDBREAK);
+        DrawTextLeftA(hdc, moveInfo, "Analyzing game review...\nThis can take a moment after longer games.", RGB(190, 201, 208), DT_LEFT | DT_TOP | DT_WORDBREAK);
+    } else if (currentPly == 0 || state.reviewMoves.empty()) {
+        RECT moveInfo = {moveCard.left + 16, moveCard.top + 16, moveCard.right - 16, moveCard.bottom - 16};
+        DrawTextLeftA(hdc, moveInfo, "Start position\nUse Next to step through the analysis.", RGB(190, 201, 208), DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else {
         const ReviewMoveInfo& info = state.reviewMoves[static_cast<std::size_t>(currentPly - 1)];
-        RECT labelRect = {moveCard.left + 16, moveCard.top + 14, moveCard.right - 16, moveCard.top + 42};
-        DrawTextLeftA(hdc, labelRect, info.label.c_str(), ClassificationColor(info.label));
+        RECT labelPill = {moveCard.left + 14, moveCard.top + 10, moveCard.left + 152, moveCard.top + 36};
+        DrawRoundPanel(hdc, labelPill, RGB(25, 30, 36), ClassificationColor(info.label));
+        DrawTextCenterA(hdc, labelPill, info.label.c_str(), ClassificationColor(info.label));
 
-        char detailText[224];
-        std::snprintf(
-            detailText,
-            sizeof(detailText),
-            "Move %d/%d: %s\nBest: %s (%s)\nPlayed: %s | Loss: %d cp | Eval: %s",
-            currentPly,
-            totalPly,
-            MoveText(info.playedMove).c_str(),
-            MoveText(info.bestMove).c_str(),
-            FormatMoverScore(info.bestScoreForMover).c_str(),
-            FormatMoverScore(info.playedScoreForMover).c_str(),
-            info.centipawnLoss,
-            FormatEval(info.afterEvalWhite).c_str());
-        RECT details = {moveCard.left + 16, moveCard.top + 44, moveCard.right - 16, moveCard.bottom - 14};
-        DrawTextLeftA(hdc, details, detailText, RGB(190, 201, 208), DT_LEFT | DT_TOP | DT_WORDBREAK);
+        char moveNumberText[32];
+        std::snprintf(moveNumberText, sizeof(moveNumberText), "%d / %d", currentPly, totalPly);
+        RECT moveNumberRect = {moveCard.right - 76, moveCard.top + 10, moveCard.right - 14, moveCard.top + 36};
+        DrawTextCenterA(hdc, moveNumberRect, moveNumberText, RGB(180, 193, 202));
+
+        RECT playedBox = {moveCard.left + 14, moveCard.top + 42, moveCard.right - 14, moveCard.top + 70};
+        RECT bestBox = {moveCard.left + 14, moveCard.top + 76, moveCard.right - 14, moveCard.top + 104};
+        DrawRoundPanel(hdc, playedBox, RGB(26, 31, 38), RGB(62, 74, 86));
+        DrawRoundPanel(hdc, bestBox, RGB(26, 31, 38), ClassificationColor("Best"));
+
+        char playedText[96];
+        std::snprintf(playedText, sizeof(playedText), "Played  %s  (%s)", MoveText(info.playedMove).c_str(), FormatMoverScore(info.playedScoreForMover).c_str());
+        RECT playedTextRect = {playedBox.left + 10, playedBox.top + 3, playedBox.right - 10, playedBox.bottom - 3};
+        DrawTextLeftA(hdc, playedTextRect, playedText, RGB(204, 213, 219));
+
+        char bestText[96];
+        std::snprintf(bestText, sizeof(bestText), "Best    %s  (%s)", MoveText(info.bestMove).c_str(), FormatMoverScore(info.bestScoreForMover).c_str());
+        RECT bestTextRect = {bestBox.left + 10, bestBox.top + 3, bestBox.right - 10, bestBox.bottom - 3};
+        DrawTextLeftA(hdc, bestTextRect, bestText, RGB(226, 236, 232));
+
+        char swingText[96];
+        std::snprintf(swingText, sizeof(swingText), "Loss %d cp     Eval %s", info.centipawnLoss, FormatEval(info.afterEvalWhite).c_str());
+        RECT swingRect = {moveCard.left + 16, moveCard.top + 106, moveCard.right - 16, moveCard.bottom - 4};
+        DrawTextLeftA(hdc, swingRect, swingText, RGB(170, 182, 190));
     }
 
     SelectObject(hdc, buttonFont);
@@ -1689,10 +2124,14 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     RECT subHeader = {panel.left + 24, panel.top + 52, panel.right - 24, panel.top + 76};
     DrawTextLeftA(hdc, subHeader, state.reviewMode ? "Post-game analysis board" : "Robot mode with chess clocks", RGB(156, 170, 180));
 
-    RECT whitePanelClock = {panel.left + 24, panel.top + 86, panel.right - 24, panel.top + 136};
-    RECT blackPanelClock = {panel.left + 24, panel.top + 144, panel.right - 24, panel.top + 194};
-    DrawClockCard(hdc, whitePanelClock, "White", FormatClock(state.whiteTimeMs), !state.reviewMode && !state.gameOver && !state.board.sideToMove, labelFont, clockFont);
-    DrawClockCard(hdc, blackPanelClock, "Black", FormatClock(state.blackTimeMs), !state.reviewMode && !state.gameOver && state.board.sideToMove, labelFont, clockFont);
+    if (state.reviewMode) {
+        DrawReviewTopSummary(hdc, state, labelFont, clockFont);
+    } else {
+        RECT whitePanelClock = {panel.left + 24, panel.top + 86, panel.right - 24, panel.top + 136};
+        RECT blackPanelClock = {panel.left + 24, panel.top + 144, panel.right - 24, panel.top + 194};
+        DrawClockCard(hdc, whitePanelClock, "White", FormatClock(state.whiteTimeMs), !state.gameOver && !state.board.sideToMove, labelFont, clockFont);
+        DrawClockCard(hdc, blackPanelClock, "Black", FormatClock(state.blackTimeMs), !state.gameOver && state.board.sideToMove, labelFont, clockFont);
+    }
 
     SelectObject(hdc, buttonFont);
     const bool canReview = state.gameOver && !state.gameMoves.empty();
@@ -1709,7 +2148,7 @@ void DrawControls(HDC hdc, const GuiState& state, HFONT titleFont, HFONT labelFo
     DrawButton(hdc, SurrenderRect(), state.reviewMode ? "Exit" : "Surrender", false);
 
     if (state.reviewMode) {
-        DrawReviewControls(hdc, state, labelFont, buttonFont, clockFont);
+        DrawReviewControls(hdc, state, labelFont, buttonFont);
         SelectObject(hdc, oldFont);
         return;
     }
@@ -1829,7 +2268,7 @@ void DrawBoard(HDC hdc, const GuiState& state) {
         16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Segoe UI");
     HFONT clockFont = CreateFontA(
-        24, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+        22, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
         CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE, "Bahnschrift");
 
     SetBkMode(hdc, TRANSPARENT);
@@ -1960,7 +2399,7 @@ bool HandleKeyDown(GuiState& state, HWND hwnd, WPARAM wParam) {
     switch (wParam) {
         case VK_RETURN:
             if (state.gameOver && !state.gameMoves.empty()) {
-                EnterReviewMode(state);
+                EnterReviewMode(state, hwnd);
             } else {
                 StartMatch(state);
             }
@@ -2001,7 +2440,7 @@ bool HandleKeyDown(GuiState& state, HWND hwnd, WPARAM wParam) {
             break;
         case 'R':
             if (state.gameOver && !state.gameMoves.empty()) {
-                EnterReviewMode(state);
+                EnterReviewMode(state, hwnd);
             } else {
                 return false;
             }
@@ -2063,7 +2502,7 @@ bool HandleControlClick(GuiState& state, HWND hwnd, const POINT& point) {
 
     if (PtInRect(&startRect, point)) {
         if (state.gameOver && !state.gameMoves.empty()) {
-            EnterReviewMode(state);
+            EnterReviewMode(state, hwnd);
         } else {
             StartMatch(state);
         }

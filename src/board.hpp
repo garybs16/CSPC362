@@ -29,10 +29,12 @@ class Board{
         unsigned char castling = WhiteKingSide | WhiteQueenSide | BlackKingSide | BlackQueenSide;
         bool sideToMove = false; /// 0 = white 1 = black
         int enPassant = -1; // Square index for en passant target, -1 if not available
+        int halfmoveClock = 0;
 
         Board();
         explicit Board(bool isBlack);
         Board(const Board& other);
+        Board& operator=(const Board& other);
 
         void setEmpty();
         void printBitBoard(uint64_t bitboard) const;

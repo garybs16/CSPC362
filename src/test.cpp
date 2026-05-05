@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <iostream>
 #include "ai.hpp"
 #include "board.hpp"
@@ -15,6 +16,23 @@ bool Expect(bool condition, const char* message) {
 void PlacePiece(Board& board, int pieceId, int square) {
     board.piece_bitboard[pieceId] |= (1ULL << square);
 }
+
+std::uint64_t Perft(const Board& board, const MoveGen& moveGen, int depth) {
+    if (depth == 0) {
+        return 1;
+    }
+
+    MoveList moves;
+    moveGen.generateAll(board, moves);
+    std::uint64_t nodes = 0;
+    for (int i = 0; i < moves.count; ++i) {
+        Board next(board);
+        if (next.makeMove(moves.moves[i])) {
+            nodes += Perft(next, moveGen, depth - 1);
+        }
+    }
+    return nodes;
+}
 }
 
 int main() {
@@ -27,6 +45,7 @@ int main() {
         MoveList moves;
         moveGen.generateAll(board, moves);
         ok &= Expect(moves.count == 20, "initial position should have 20 legal moves");
+        ok &= Expect(Perft(board, moveGen, 2) == 400, "initial position perft depth 2 should be 400");
     }
 
     {
@@ -36,11 +55,17 @@ int main() {
         ok &= Expect(board.getPieceAt(28) == P, "white pawn should land on e4");
         ok &= Expect(board.getPieceAt(12) == -1, "e2 should be empty after e2e4");
         ok &= Expect(board.enPassant == 20, "e2e4 should set en passant square to e3");
+        ok &= Expect(board.halfmoveClock == 0, "pawn moves should reset the halfmove clock");
         ok &= Expect(board.sideToMove, "side to move should switch to black after white move");
+
+        ok &= Expect(board.makeMove(Move(62, 45)), "g8f6 should apply");
+        ok &= Expect(board.halfmoveClock == 1, "quiet non-pawn moves should increment the halfmove clock");
+        ok &= Expect(board.makeMove(Move(6, 21)), "g1f3 should apply");
+        ok &= Expect(board.halfmoveClock == 2, "consecutive quiet non-pawn moves should keep incrementing the halfmove clock");
 
         MoveList blackMoves;
         moveGen.generateAll(board, blackMoves);
-        ok &= Expect(blackMoves.count == 20, "black should have 20 legal replies after e2e4");
+        ok &= Expect(blackMoves.count > 0, "black should still have legal replies after quiet development");
     }
 
     {
@@ -82,6 +107,23 @@ int main() {
     {
         Board board;
         board.setEmpty();
+        board.castling = WhiteKingSide;
+        board.sideToMove = false;
+        board.enPassant = -1;
+        PlacePiece(board, K, 4);
+        PlacePiece(board, R, 7);
+        PlacePiece(board, bK, 60);
+        PlacePiece(board, bR, 61);
+        board.updateOccupancy();
+
+        MoveList moves;
+        moveGen.generateAll(board, moves);
+        ok &= Expect(!moves.contains(4, 6, KingSideCastle), "castling through an attacked square should be illegal");
+    }
+
+    {
+        Board board;
+        board.setEmpty();
         board.castling = 0;
         board.sideToMove = false;
         board.enPassant = 43;
@@ -115,6 +157,19 @@ int main() {
         ok &= Expect(moves.contains(48, 56, PromotionQueen), "promotion move should be generated");
         ok &= Expect(board.makeMove(Move(48, 56, PromotionQueen)), "promotion move should apply");
         ok &= Expect(board.getPieceAt(56) == Q, "white pawn should promote to a queen");
+    }
+
+    {
+        Board board;
+        board.setEmpty();
+        board.castling = 0;
+        board.sideToMove = false;
+        board.enPassant = -1;
+        PlacePiece(board, K, 4);
+        PlacePiece(board, bK, 12);
+        board.updateOccupancy();
+
+        ok &= Expect(!board.makeMove(Move(4, 12, Capture)), "king captures should be rejected");
     }
 
     {

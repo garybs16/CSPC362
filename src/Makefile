@@ -1,6 +1,6 @@
 CXX = g++
 CXXFLAGS = -O3 -Wall -Wextra -std=c++20
-LDFLAGS = -lgdi32
+LDFLAGS = -lgdi32 -lwinmm
 
 TARGET = engine.exe
 TEST_TARGET = engine_tests.exe
@@ -21,7 +21,7 @@ main.o: main.cpp gui.hpp
 board.o: board.cpp board.hpp
 	$(CXX) $(CXXFLAGS) -c board.cpp
 
-movegen.o: movegen.cpp movegen.hpp move.hpp
+movegen.o: movegen.cpp movegen.hpp move.hpp board.hpp
 	$(CXX) $(CXXFLAGS) -c movegen.cpp
 
 gui.o: gui.cpp gui.hpp ai.hpp board.hpp move.hpp

@@ -43,6 +43,14 @@ Board::Board(bool isBlack_) : sideToMove(isBlack_) {
 }
 
 Board::Board(const Board& other) {
+    *this = other;
+}
+
+Board& Board::operator=(const Board& other) {
+    if (this == &other) {
+        return *this;
+    }
+
     for (size_t i = 0; i < 12; ++i) {
         piece_bitboard[i] = other.piece_bitboard[i];
     }
@@ -52,6 +60,8 @@ Board::Board(const Board& other) {
     castling = other.castling;
     sideToMove = other.sideToMove;
     enPassant = other.enPassant;
+    halfmoveClock = other.halfmoveClock;
+    return *this;
 }
 
 void Board::setEmpty() {
@@ -61,6 +71,7 @@ void Board::setEmpty() {
     for (size_t i = 0; i < 3; ++i) {
         occupancy[i] = 0ULL;
     }
+    halfmoveClock = 0;
 }
 
 void Board::printBitBoard(uint64_t bitboard) const {
@@ -80,6 +91,7 @@ void Board::defaultBoard() {
     sideToMove = false;
     castling = WhiteKingSide | WhiteQueenSide | BlackKingSide | BlackQueenSide;
     enPassant = -1;
+    halfmoveClock = 0;
 
     for (size_t i = 8; i < 16; ++i) {
         piece_bitboard[P] |= (1ULL << i);
@@ -176,7 +188,11 @@ bool Board::makeMove(const Move& m) {
     if (capturedPiece != -1 && IsBlackPiece(capturedPiece) == movingBlack) {
         return false;
     }
+    if (capturedPiece == K || capturedPiece == bK) {
+        return false;
+    }
 
+    const bool resetsHalfmoveClock = movingPiece == P || movingPiece == bP || capturedPiece != -1 || flags == EnPassant;
     enPassant = -1;
 
     RemovePiece(piece_bitboard[movingPiece], from);
@@ -248,6 +264,7 @@ bool Board::makeMove(const Move& m) {
         AddPiece(piece_bitboard[PromotionPieceForFlag(flags, movingBlack)], dest);
     }
 
+    halfmoveClock = resetsHalfmoveClock ? 0 : halfmoveClock + 1;
     sideToMove = !movingBlack;
     updateOccupancy();
     return true;
